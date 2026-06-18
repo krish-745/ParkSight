@@ -1,0 +1,12 @@
+# API backend
+fastapi
+uvicorn[standard]
+pydantic>=2
+
+# data + optimization (runtime)
+pandas
+numpy
+scikit-learn
+
+# precompute.py only (offline road-grounding; not needed to serve the API)
+osmnx
