@@ -8,14 +8,19 @@ Run:  uvicorn main:app --reload --port 8000     (from the app/ folder)
 """
 
 import os
+import logging
 import numpy as np
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 import core
 from data import get_store
-from schemas import (Stats, Hotspot, OptimizeRequest, OptimizeResponse, CoverageCurve)
+from schemas import (Stats, Hotspot, OptimizeRequest, OptimizeResponse, CoverageCurve,
+                     RouteRequest, RouteResponse)
+
+logger = logging.getLogger("parksight")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND = os.path.join(HERE, "frontend", "index.html")
@@ -135,6 +140,124 @@ def _coverage_curve(kmax: int, cover_radius_m: int):
 def coverage_curve(kmax: int = Query(40, ge=5, le=80), cover_radius_m: int = Query(1000, ge=200, le=3000)):
     """Impact-covered vs fleet-size, optimized vs baselines, + recommended fleet (elbow)."""
     return _coverage_curve(kmax, cover_radius_m)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Patrol Route Optimizer (TSP + OSRM road-snapped routing)
+# ─────────────────────────────────────────────────────────────────────────────
+
+OSRM_BASE = "https://router.project-osrm.org/route/v1/driving"
+ROAD_FACTOR = 1.4  # haversine → road distance multiplier when OSRM unavailable
+
+
+def _osrm_route(lats, lons):
+    """Fetch a road-snapped route from the public OSRM API.
+    Returns (polyline_coords, leg_distances_km, leg_durations_min) or None on failure."""
+    coords_str = ";".join(f"{lon},{lat}" for lat, lon in zip(lats, lons))
+    url = f"{OSRM_BASE}/{coords_str}?overview=full&geometries=geojson&steps=false"
+    try:
+        resp = httpx.get(url, timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "Ok":
+            return None
+        route = data["routes"][0]
+        # GeoJSON coords are [lon, lat]; convert to [lat, lon]
+        polyline = [[c[1], c[0]] for c in route["geometry"]["coordinates"]]
+        legs = route["legs"]
+        leg_dist = [leg["distance"] / 1000.0 for leg in legs]   # meters → km
+        leg_time = [leg["duration"] / 60.0 for leg in legs]     # seconds → min
+        return polyline, leg_dist, leg_time
+    except Exception as e:
+        logger.warning(f"OSRM request failed: {e}")
+        return None
+
+
+def _haversine_fallback(lats, lons, dist_matrix, tour, avg_speed_kmh):
+    """Straight-line fallback with a road-factor multiplier."""
+    n = len(tour)
+    polyline = [[float(lats[tour[i]]), float(lons[tour[i]])] for i in range(n)]
+    # close the loop visually
+    polyline.append(polyline[0])
+    leg_dist = []
+    leg_time = []
+    for i in range(n):
+        d = dist_matrix[tour[i], tour[(i + 1) % n]] * ROAD_FACTOR
+        leg_dist.append(round(d, 2))
+        leg_time.append(round(d / avg_speed_kmh * 60, 1))
+    return polyline, leg_dist, leg_time
+
+
+@app.post("/api/route", response_model=RouteResponse)
+def patrol_route(req: RouteRequest):
+    """Compute the optimal patrol driving circuit (TSP) through the selected stations.
+
+    1. Runs the max-coverage optimizer to pick station locations
+    2. Solves TSP (nearest-neighbor + 2-opt) for the driving order
+    3. Fetches road-snapped geometry from OSRM (falls back to haversine × 1.4)
+    """
+    s = get_store()
+    hs = s.hs
+    impact = hs["impact"].values
+    nbrs = s.index.neighbors(req.cover_radius_m)
+
+    # step 1: pick patrol stations via greedy max-coverage
+    chosen, _ = core.greedy_maxcover(impact, nbrs, req.num_patrols)
+    if len(chosen) < 2:
+        raise HTTPException(400, "Need at least 2 patrol stations to compute a route")
+
+    patrol_lats = [float(hs.iloc[i].centroid_lat) for i in chosen]
+    patrol_lons = [float(hs.iloc[i].centroid_lon) for i in chosen]
+
+    # step 2: solve TSP for optimal visit order
+    tour_order, dist_matrix = core.solve_tsp(patrol_lats, patrol_lons)
+
+    # reorder chosen indices to match tour
+    ordered_chosen = [chosen[i] for i in tour_order]
+    ordered_lats = [patrol_lats[i] for i in tour_order]
+    ordered_lons = [patrol_lons[i] for i in tour_order]
+
+    # step 3: get road-snapped route (OSRM) or fallback
+    # OSRM needs the loop closed: append the start point
+    loop_lats = ordered_lats + [ordered_lats[0]]
+    loop_lons = ordered_lons + [ordered_lons[0]]
+
+    osrm_result = _osrm_route(loop_lats, loop_lons)
+    if osrm_result is not None:
+        polyline, leg_dist, leg_time = osrm_result
+        route_source = "osrm"
+    else:
+        polyline, leg_dist, leg_time = _haversine_fallback(
+            patrol_lats, patrol_lons, dist_matrix, tour_order, req.avg_speed_kmh
+        )
+        route_source = "haversine_fallback"
+
+    # build response stops
+    stops = []
+    for idx, ci in enumerate(ordered_chosen):
+        r = hs.iloc[ci]
+        cov = nbrs[ci]
+        stops.append(dict(
+            order=idx + 1,
+            lat=float(r.centroid_lat),
+            lon=float(r.centroid_lon),
+            station=str(r.dominant_police_station),
+            hotspots_covered=int(len(cov)),
+            recommended_shift=core.shift_window(int(r.peak_hour)),
+            dist_to_next_km=round(leg_dist[idx], 2),
+            time_to_next_min=round(leg_time[idx], 1),
+        ))
+
+    total_dist = round(sum(leg_dist), 2)
+    total_time = round(sum(leg_time), 1)
+
+    return dict(
+        stops=stops,
+        total_distance_km=total_dist,
+        total_time_min=total_time,
+        polyline=polyline,
+        route_source=route_source,
+    )
 
 
 @app.get("/api/temporal")

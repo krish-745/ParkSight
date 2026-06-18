@@ -48,6 +48,15 @@
   input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#F5A623; cursor:pointer; border:2px solid #0A0A0B; }
   select{ background:#16161A; }
   .hm-cell{ width:100%; aspect-ratio:1; border-radius:2px; }
+  /* route animation */
+  .route-summary { transition: all 0.3s ease; }
+  .route-summary.hidden { opacity:0; transform:translateY(8px); pointer-events:none; }
+  .route-summary.visible { opacity:1; transform:translateY(0); }
+  .route-btn { transition: all 0.15s ease; }
+  .route-btn:hover { border-color: #3FB6A8 !important; color: #3FB6A8 !important; }
+  .route-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .route-btn.active { background:#3FB6A8 !important; color:#0A0A0B !important; border-color:#3FB6A8 !important; }
+  @keyframes dash { to { stroke-dashoffset: -30; } }
 </style>
 </head>
 
@@ -69,6 +78,31 @@
     <section class="col-span-12 lg:col-span-8 rounded-xl border border-line bg-card overflow-hidden relative min-h-0">
       <div class="absolute z-[500] top-3 left-3 px-2.5 py-1 rounded-md bg-card2/90 border border-line text-[11px] text-muted backdrop-blur">
         Hotspot size = violations · color = impact · <span class="text-accent">amber = optimized patrol</span>
+      </div>
+      <!-- Route Summary Overlay -->
+      <div id="route-summary" class="route-summary hidden absolute z-[500] bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 px-5 py-3 rounded-xl bg-card2/95 border border-teal/40 backdrop-blur">
+        <div class="flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3FB6A8" stroke-width="2"><path d="M3 12h18M13 5l7 7-7 7"/></svg>
+          <span class="text-xs text-muted">Patrol Circuit</span>
+        </div>
+        <div class="h-6 w-px bg-line"></div>
+        <div>
+          <div class="text-sm font-bold tnum text-teal" id="route-dist">—</div>
+          <div class="text-[9px] uppercase tracking-wider text-dim">Distance</div>
+        </div>
+        <div class="h-6 w-px bg-line"></div>
+        <div>
+          <div class="text-sm font-bold tnum text-teal" id="route-time">—</div>
+          <div class="text-[9px] uppercase tracking-wider text-dim">Est. Time</div>
+        </div>
+        <div class="h-6 w-px bg-line"></div>
+        <div>
+          <div class="text-sm font-bold tnum" id="route-stops">—</div>
+          <div class="text-[9px] uppercase tracking-wider text-dim">Stops</div>
+        </div>
+        <div class="h-6 w-px bg-line"></div>
+        <div class="text-[10px] text-dim" id="route-source"></div>
+        <button onclick="clearRoute()" class="ml-2 text-dim hover:text-fg text-sm" title="Clear route">&times;</button>
       </div>
       <div id="map" class="w-full h-full"></div>
     </section>
@@ -114,6 +148,12 @@
             <input id="sl-radius" type="range" min="200" max="3000" step="100" value="1000" class="w-full" />
           </div>
         </div>
+
+        <!-- Route Button -->
+        <button id="btn-route" class="route-btn mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-line text-sm font-medium text-muted" onclick="computeRoute()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M13 5l7 7-7 7"/></svg>
+          Compute Patrol Route
+        </button>
       </div>
 
       <!-- FILTERS -->
@@ -180,7 +220,8 @@ const API = (location.origin && location.origin.startsWith('http')) ? '' : 'http
 const $ = (s) => document.querySelector(s);
 const fmt = (n) => n.toLocaleString('en-IN');
 let HOTSPOTS = [], LAST_PLAN = [];
-let map, hotspotLayer, patrolLayer, covChart;
+let map, hotspotLayer, patrolLayer, routeLayer, covChart;
+let routeActive = false;
 
 // ---- color helpers ----
 function heatColor(norm) { // norm 0-100 -> yellow->orange->red
@@ -211,6 +252,7 @@ function initMap(){
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom:19 }).addTo(map);
   hotspotLayer = L.layerGroup().addTo(map);
   patrolLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
 }
 function drawHotspots(list){
   hotspotLayer.clearLayers();
@@ -251,6 +293,8 @@ async function runOptimize(){
   LAST_PLAN = res.plan;
   drawPatrols(res.plan, radius);
   renderPlan(res.plan);
+  // clear route when optimizer settings change
+  if(routeActive) clearRoute();
 }
 function renderPlan(plan){
   $('#plan-rows').innerHTML = plan.map(p=>`
@@ -349,12 +393,88 @@ $('#btn-csv').onclick = ()=>{
   const head = 'rank,station,road_class,lanes,hotspots_covered,recommended_shift,impact_covered_pct';
   const rows = LAST_PLAN.map(p=>[p.rank,p.station,p.road_class,p.lanes,p.hotspots_covered,p.recommended_shift,p.impact_covered_pct].join(','));
   const blob = new Blob([head+'\n'+rows.join('\n')], {type:'text/csv'});
+
   const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='deployment_plan.csv'; a.click();
 };
 
 // ---- sliders ----
 $('#sl-patrols').oninput = e=>{ $('#lbl-patrols').textContent = e.target.value; scheduleOptimize(); };
 $('#sl-radius').oninput  = e=>{ $('#lbl-radius').textContent = e.target.value+' m'; scheduleOptimize(); };
+
+// ---- patrol route (TSP) ----
+async function computeRoute(){
+  const btn = $('#btn-route');
+  btn.disabled = true;
+  btn.innerHTML = '<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="10"/></svg> Computing...';
+  try {
+    const num = +$('#sl-patrols').value, radius = +$('#sl-radius').value;
+    const res = await fetch(`${API}/api/route`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ num_patrols:num, cover_radius_m:radius })
+    }).then(r=>r.json());
+    drawRoute(res);
+    btn.classList.add('active');
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M13 5l7 7-7 7"/></svg> Route Active';
+  } catch(e) {
+    console.error('Route error:', e);
+    btn.innerHTML = 'Route Failed — Retry';
+  }
+  btn.disabled = false;
+}
+
+function drawRoute(data){
+  routeLayer.clearLayers();
+  routeActive = true;
+  // draw polyline
+  const latlngs = data.polyline.map(c => [c[0], c[1]]);
+  const routeLine = L.polyline(latlngs, {
+    color: '#3FB6A8', weight: 3.5, opacity: 0.9,
+    dashArray: '10 10', lineCap: 'round',
+    className: 'route-line'
+  }).addTo(routeLayer);
+
+  // draw numbered stop markers
+  data.stops.forEach(s => {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:#3FB6A8;border:2px solid #0A0A0B;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#0A0A0B;font-family:Inter,sans-serif;box-shadow:0 0 8px rgba(63,182,168,0.4)">${s.order}</div>`,
+      iconSize: [22, 22], iconAnchor: [11, 11]
+    });
+    L.marker([s.lat, s.lon], { icon, zIndexOffset: 1000 })
+      .bindPopup(
+        `<b>Stop #${s.order} · ${s.station}</b><br>`+
+        `Covers ${s.hotspots_covered} hotspots · ${s.recommended_shift}<br>`+
+        `Next leg: ${s.dist_to_next_km} km · ~${s.time_to_next_min} min`
+      ).addTo(routeLayer);
+  });
+
+  // animate the route dash
+  const el = routeLine.getElement();
+  if(el) el.style.animation = 'dash 1.5s linear infinite';
+
+  // update summary bar
+  $('#route-dist').textContent = data.total_distance_km.toFixed(1) + ' km';
+  $('#route-time').textContent = data.total_time_min.toFixed(0) + ' min';
+  $('#route-stops').textContent = data.stops.length;
+  $('#route-source').textContent = data.route_source === 'osrm' ? 'Road-snapped (OSRM)' : 'Estimated (haversine)';
+  const summary = $('#route-summary');
+  summary.classList.remove('hidden');
+  summary.classList.add('visible');
+
+  // fit map to route
+  map.fitBounds(routeLine.getBounds().pad(0.15));
+}
+
+function clearRoute(){
+  routeLayer.clearLayers();
+  routeActive = false;
+  const summary = $('#route-summary');
+  summary.classList.remove('visible');
+  summary.classList.add('hidden');
+  const btn = $('#btn-route');
+  btn.classList.remove('active');
+  btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M13 5l7 7-7 7"/></svg> Compute Patrol Route';
+}
 
 // ---- init ----
 (async function(){

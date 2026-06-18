@@ -72,3 +72,30 @@ class CoverageCurve(BaseModel):
     volume_pct: List[float]
     elbow: int
     elbow_coverage_pct: float
+
+
+# ── Patrol Route Optimizer (TSP) ──
+
+class RouteStop(BaseModel):
+    order: int                       # 1-indexed stop order in the tour
+    lat: float
+    lon: float
+    station: str
+    hotspots_covered: int
+    recommended_shift: str
+    dist_to_next_km: float           # road distance to the next stop
+    time_to_next_min: float          # estimated travel time to the next stop
+
+
+class RouteRequest(BaseModel):
+    num_patrols: int = Field(10, ge=2, le=50, description="Number of patrol stations to route through")
+    cover_radius_m: int = Field(1000, ge=200, le=3000, description="Coverage radius per patrol (m)")
+    avg_speed_kmh: float = Field(25.0, ge=5, le=80, description="Average patrol driving speed (km/h)")
+
+
+class RouteResponse(BaseModel):
+    stops: List[RouteStop]
+    total_distance_km: float
+    total_time_min: float
+    polyline: List[List[float]]      # [[lat, lon], ...] road-snapped or straight-line
+    route_source: str                # "osrm" or "haversine_fallback"

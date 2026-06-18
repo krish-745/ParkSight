@@ -87,3 +87,87 @@ def shift_window(hour: int) -> str:
     if 17 <= hour < 22:
         return "Evening (17:00-22:00)"
     return "Night (22:00-06:00)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TSP Solver — nearest-neighbor construction + 2-opt improvement
+# ─────────────────────────────────────────────────────────────────────────────
+
+def haversine_matrix(lats, lons):
+    """Pairwise great-circle distance matrix (km) for n points."""
+    lats = np.radians(np.asarray(lats, dtype=float))
+    lons = np.radians(np.asarray(lons, dtype=float))
+    n = len(lats)
+    # broadcast: dlat[i,j] = lats[j] - lats[i]
+    dlat = lats[None, :] - lats[:, None]
+    dlon = lons[None, :] - lons[:, None]
+    a = np.sin(dlat / 2) ** 2 + np.cos(lats[:, None]) * np.cos(lats[None, :]) * np.sin(dlon / 2) ** 2
+    return 2 * (EARTH_M / 1000) * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+
+
+def nearest_neighbor_tsp(dist, start=0):
+    """Greedy nearest-neighbor tour starting from `start`. Returns ordered indices."""
+    n = len(dist)
+    visited = {start}
+    tour = [start]
+    cur = start
+    for _ in range(n - 1):
+        row = dist[cur].copy()
+        row[list(visited)] = np.inf
+        nxt = int(np.argmin(row))
+        tour.append(nxt)
+        visited.add(nxt)
+        cur = nxt
+    return tour
+
+
+def two_opt_improve(tour, dist, max_iters=2000):
+    """2-opt local search: repeatedly reverse sub-tours to reduce total distance."""
+    tour = list(tour)
+    n = len(tour)
+    if n < 4:
+        return tour
+
+    def tour_dist(t):
+        return sum(dist[t[i], t[(i + 1) % n]] for i in range(n))
+
+    best = tour_dist(tour)
+    improved = True
+    iters = 0
+    while improved and iters < max_iters:
+        improved = False
+        iters += 1
+        for i in range(n - 1):
+            for j in range(i + 2, n):
+                if i == 0 and j == n - 1:
+                    continue  # skip full reversal
+                # cost of removing edges (i, i+1) and (j, j+1) and adding (i, j) and (i+1, j+1)
+                a, b = tour[i], tour[(i + 1) % n]
+                c, d = tour[j], tour[(j + 1) % n]
+                delta = (dist[a, c] + dist[b, d]) - (dist[a, b] + dist[c, d])
+                if delta < -1e-10:
+                    tour[i + 1:j + 1] = tour[i + 1:j + 1][::-1]
+                    best += delta
+                    improved = True
+    return tour
+
+
+def solve_tsp(lats, lons):
+    """Full TSP pipeline: build distance matrix → NN construction → 2-opt improvement.
+    Returns (ordered_indices, distance_matrix_km)."""
+    dist = haversine_matrix(lats, lons)
+    n = len(lats)
+    if n <= 1:
+        return list(range(n)), dist
+    if n <= 3:
+        return list(range(n)), dist
+
+    # try starting from each node, keep best tour
+    best_tour, best_cost = None, np.inf
+    for start in range(min(n, 5)):  # try up to 5 starts for quality
+        tour = nearest_neighbor_tsp(dist, start)
+        tour = two_opt_improve(tour, dist)
+        cost = sum(dist[tour[i], tour[(i + 1) % n]] for i in range(n))
+        if cost < best_cost:
+            best_tour, best_cost = tour, cost
+    return best_tour, dist
