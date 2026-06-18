@@ -27,7 +27,15 @@ warnings.filterwarnings('ignore')
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-DATA_PATH = os.path.join(os.path.dirname(__file__), "jan to may police violation_anonymized791b166.csv")
+import glob as _glob
+def _find_data():
+    here = os.path.dirname(__file__)
+    for d in (here, os.path.dirname(here)):  # this folder, then parent
+        hits = _glob.glob(os.path.join(d, "jan to may police violation*.csv"))
+        if hits:
+            return hits[0]
+    raise FileNotFoundError("parking violation CSV not found in Flipkart_Round2/ or its parent")
+DATA_PATH = _find_data()
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -38,11 +46,12 @@ EARTH_RADIUS_KM = 6371.0 # Earth radius for haversine
 
 # Violation Severity Weights (higher = more congestion impact)
 VIOLATION_SEVERITY = {
-    "DOUBLE PARKING": 5,
-    "PARKING IN A MAIN ROAD": 4,
-    "PARKING NEAR BUSTOP/SCHOOL/HOSPITAL ETC": 4,
+    "PARKING IN A MAIN ROAD": 5,
+    "DOUBLE PARKING": 3,
+    "PARKING NEAR BUSTOP/SCHOOL/HOSPITAL ETC": 3,
     "PARKING NEAR ROAD CROSSING": 3,
     "PARKING OPPOSITE TO ANOTHER PARKED VEHICLE": 3,
+    "PARKING ON FOOTPATH": 2,
     "WRONG PARKING": 2,
     "NO PARKING": 2,
 }
@@ -50,12 +59,14 @@ DEFAULT_SEVERITY = 1
 
 # Vehicle Footprint Scores (proportional to road space occupied)
 VEHICLE_FOOTPRINT = {
-    "TANKER": 3, "BUS": 3, "TRUCK": 3, "LORRY": 3,
-    "MAXI-CAB": 2, "CAR": 2, "JEEP": 2, "AMBULANCE": 2,
-    "PASSENGER AUTO": 1, "MOTOR CYCLE": 1, "SCOOTER": 1,
-    "E-RICKSHAW": 1, "CYCLE": 0.5,
+    "TANKER": 3, "BUS": 3, "TRUCK": 3, "LORRY": 3, "LGV": 3,
+    "MAXI-CAB": 2, "CAR": 2, "JEEP": 2, "AMBULANCE": 2, "PASSENGER AUTO": 2,
+    "MOTOR CYCLE": 1, "SCOOTER": 1, "E-RICKSHAW": 1, "CYCLE": 0.5,
 }
 DEFAULT_FOOTPRINT = 1
+
+# Junction proximity multiplier (applied as 1 + JUNCTION_MULT * is_junction)
+JUNCTION_MULT = 0.3
 
 # ============================================================================
 # PHASE 1: DATA LOADING & PREPROCESSING
@@ -102,11 +113,14 @@ print(f"      After geographic bounding box filter: {len(df_clean):,}")
 print(f"\n[1.4] Feature Engineering...")
 
 # --- Parse datetime ---
+# Timestamps are UTC; convert to IST (Asia/Kolkata, UTC+5:30) BEFORE deriving hour/day,
+# otherwise peak-hour analysis is shifted 5.5h (UTC 0-6 is actually IST morning rush).
 df_clean['created_datetime'] = pd.to_datetime(df_clean['created_datetime'], errors='coerce', utc=True)
-df_clean['hour'] = df_clean['created_datetime'].dt.hour
-df_clean['day_of_week'] = df_clean['created_datetime'].dt.dayofweek  # 0=Mon, 6=Sun
-df_clean['month'] = df_clean['created_datetime'].dt.month
-df_clean['day_name'] = df_clean['created_datetime'].dt.day_name()
+df_clean['created_ist'] = df_clean['created_datetime'].dt.tz_convert('Asia/Kolkata')
+df_clean['hour'] = df_clean['created_ist'].dt.hour
+df_clean['day_of_week'] = df_clean['created_ist'].dt.dayofweek  # 0=Mon, 6=Sun
+df_clean['month'] = df_clean['created_ist'].dt.month
+df_clean['day_name'] = df_clean['created_ist'].dt.day_name()
 
 # --- Parse violation_type JSON array ---
 def parse_violation_types(val):
@@ -147,11 +161,11 @@ df_clean['vehicle_footprint'] = df_clean['vehicle_type'].map(
 df_clean['is_junction'] = (df_clean['junction_name'] != 'No Junction').astype(int)
 
 # --- Congestion Impact Score ---
-# CIS = severity × footprint × (1 + junction_flag)
+# CIS = severity × footprint × (1 + JUNCTION_MULT × junction_flag)
 df_clean['congestion_impact_score'] = (
     df_clean['violation_severity'] *
     df_clean['vehicle_footprint'] *
-    (1 + df_clean['is_junction'])
+    (1 + JUNCTION_MULT * df_clean['is_junction'])
 )
 
 print(f"      Congestion Impact Score stats:")
@@ -248,10 +262,12 @@ dominant_vehicles.columns = ['cluster', 'dominant_vehicle_type']
 hotspot_stats = hotspot_stats.merge(dominant_violations, on='cluster')
 hotspot_stats = hotspot_stats.merge(dominant_vehicles, on='cluster')
 
-# Compute approximate radius in meters
+# Compute approximate radius in meters (scale longitude by cos(lat): lon degrees are
+# shorter than lat degrees away from the equator)
+_coslat = np.cos(np.radians(hotspot_stats['centroid_lat']))
 hotspot_stats['approx_radius_m'] = np.sqrt(
-    hotspot_stats['lat_std']**2 + hotspot_stats['lon_std']**2
-) * 111000  # rough degree-to-meter conversion
+    hotspot_stats['lat_std']**2 + (hotspot_stats['lon_std'] * _coslat)**2
+) * 111000  # degree-to-meter conversion
 
 # Rank by Congestion Impact Index
 hotspot_stats = hotspot_stats.sort_values('congestion_impact_index', ascending=False).reset_index(drop=True)
@@ -263,7 +279,18 @@ hotspot_stats['cii_normalized'] = scaler.fit_transform(
     hotspot_stats[['congestion_impact_index']]
 ).flatten()
 
+# Intensity metrics: CII is a SUM, so it is volume-dominated. cii_density (impact per km^2)
+# surfaces severe-but-smaller hotspots that raw CII buries; avg_impact_score is per-violation.
+_area_km2 = (np.pi * (hotspot_stats['approx_radius_m'].clip(lower=50) / 1000) ** 2).clip(lower=1e-3)
+hotspot_stats['cii_density'] = hotspot_stats['congestion_impact_index'] / _area_km2
+
 print(f"      Total hotspots: {len(hotspot_stats)}")
+_intense = hotspot_stats.sort_values('avg_impact_score', ascending=False).head(10)
+print("\n[2.4b] Top 10 by INTENSITY (avg impact/violation) - severe but not necessarily busiest:")
+for _, r in _intense.iterrows():
+    print(f"        #{int(r['rank']):>3} CII-rank | {str(r['dominant_police_station'])[:22]:<22} "
+          f"avg_impact={r['avg_impact_score']:.1f}  count={int(r['violation_count'])}  "
+          f"dominant={str(r['dominant_violation_type'])[:24]}")
 print(f"\n[2.4] Top 20 Parking Violation Hotspots by Congestion Impact Index:")
 print("-" * 120)
 print(f"{'Rank':<5} {'CII':>8} {'CII%':>6} {'Count':>7} {'AvgSev':>7} {'Jct%':>6} {'PeakHr':>7} {'Radius(m)':>10} {'Police Station':<25} {'Dominant Violation':<30}")
@@ -296,7 +323,7 @@ ax.scatter(noise['longitude'], noise['latitude'],
 
 # Plot clustered points (top 30 clusters with distinct colors)
 top_clusters = hotspot_stats.head(30)['cluster'].values
-cmap = plt.cm.get_cmap('tab20', min(20, len(top_clusters)))
+cmap = plt.get_cmap('tab20', min(20, len(top_clusters)))
 
 for i, cid in enumerate(top_clusters):
     cluster_data = df_clean[df_clean['cluster'] == cid]
@@ -479,7 +506,7 @@ print("=" * 80)
 # Hotspot Summary CSV
 hotspot_output_cols = [
     'rank', 'cluster', 'violation_count', 'congestion_impact_index', 'cii_normalized',
-    'avg_impact_score', 'avg_severity', 'junction_pct', 'peak_hour',
+    'cii_density', 'avg_impact_score', 'avg_severity', 'junction_pct', 'peak_hour',
     'centroid_lat', 'centroid_lon', 'approx_radius_m',
     'dominant_police_station', 'dominant_junction', 'dominant_violation_type',
     'dominant_vehicle_type', 'unique_vehicles'
