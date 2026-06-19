@@ -40,6 +40,12 @@ def home():
     return FileResponse(FRONTEND)
 
 
+@app.get("/overview", include_in_schema=False)
+def overview():
+    """Serve the scroll-snap Overview page."""
+    return FileResponse(os.path.join(HERE, "frontend", "overview.html"))
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
