@@ -53,50 +53,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-
-        <div className="mt-auto px-4 py-4 border-t border-divider/40">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-text-secondary/70">Status</div>
-          <div className="mt-2 flex items-center gap-2 text-[12.5px]">
-            <span className="size-1.5 rounded-full bg-active animate-pulse" />
-            <span className="text-text-primary">All feeds nominal</span>
-          </div>
-          <div className="mt-1 text-[11px] text-text-secondary">3 cameras offline</div>
-        </div>
       </aside>
 
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Topbar */}
-        <header className="h-14 shrink-0 border-b border-divider/60 bg-navy/40 backdrop-blur flex items-center px-5 gap-4">
-          <button className="group flex items-center gap-2 rounded-md border border-divider/60 px-3 py-1.5 text-[12.5px] hover:border-command/60">
-            <span className="size-1.5 rounded-full bg-info" />
-            <span className="text-text-primary">{region.name}</span>
-            <ChevronDown className="size-3.5 text-text-secondary" />
-          </button>
-
-          <div className="hidden md:flex items-center gap-2 rounded-md border border-divider/60 px-3 py-1.5 text-[12.5px] text-text-secondary">
-            <span className="text-text-primary">{region.range}</span>
-            <ChevronDown className="size-3.5" />
-          </div>
-
-          <div className="ml-auto flex items-center gap-3">
-            <button className="relative rounded-md p-2 text-text-secondary hover:bg-panel/40 hover:text-text-primary">
-              <Bell className="size-4" />
-              <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-critical" />
-            </button>
-            <div className="flex items-center gap-2 pl-3 border-l border-divider/60">
-              <div className="size-7 rounded-full bg-gradient-to-br from-command to-info grid place-items-center text-[11px] font-semibold">
-                AG
-              </div>
-              <div className="hidden lg:flex flex-col leading-tight">
-                <span className="text-[12.5px] text-text-primary">Officer A. Gowda</span>
-                <span className="text-[10.5px] text-text-secondary">Traffic Ops · Shift B</span>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <main className="flex-1 min-w-0">{children}</main>
+        <main className="flex-1 min-w-0 h-screen">{children}</main>
       </div>
     </div>
   );

@@ -1,14 +1,19 @@
-import { hotspots, heatBlobs } from "@/data/mock";
+import { hotspots as mockHotspots, heatBlobs as mockBlobs } from "@/data/mock";
+import type { Hotspot } from "@/data/mock";
 
 type Props = {
   className?: string;
   showLabels?: boolean;
   showBlobs?: boolean;
   showDots?: boolean;
+  points?: Hotspot[];
+  blobs?: { x: number; y: number; r: number; intensity: number }[];
 };
 
 // Stylized city-grid SVG with radial heat blobs and dot clusters.
-export function HeatMap({ className, showLabels = false, showBlobs = true, showDots = true }: Props) {
+export function HeatMap({ className, showLabels = false, showBlobs = true, showDots = true, points, blobs }: Props) {
+  const hotspots = points ?? mockHotspots;
+  const heatBlobs = blobs ?? mockBlobs;
   return (
     <svg
       viewBox="0 0 100 100"

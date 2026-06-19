@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, ArrowDownRight, TrendingUp } from "lucide-react";
 import { HeatMap } from "@/components/heat-map";
-import { kpis, topHotspots } from "@/data/mock";
+import { topHotspots as topHotspotsMock } from "@/data/mock";
+import type { Hotspot } from "@/data/mock";
+import { useLive, apiGetStats, apiGetHotspots, toTopHotspots, toMapPoints, type Stats } from "@/data/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -36,6 +38,11 @@ function Kpi({ label, value, suffix, foot, accent = "command" }: {
 }
 
 function Overview() {
+  const stats = useLive<Stats | null>(apiGetStats, null);
+  const mapPts = useLive<Hotspot[]>(() => apiGetHotspots(600).then(toMapPoints), []);
+  const top = useLive(() => apiGetHotspots(5).then(toTopHotspots), topHotspotsMock);
+  const fmt = (n: number) => n.toLocaleString("en-IN");
+  const covPct = stats?.coverage_at_recommended_pct ?? 77;
   return (
     <div className="px-6 lg:px-10 py-8 space-y-8 max-w-[1500px]">
       {/* Page heading */}
@@ -54,13 +61,13 @@ function Overview() {
 
       {/* KPI bar — divided instrument strip */}
       <section className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-divider/40 border-y border-divider/40">
-        <Kpi label="Hotspots" value="612" foot={<>DBSCAN clusters · +14 wk/wk</>} accent="warning" />
-        <Kpi label="Violations analyzed" value="1,15,350" foot={<>approved records</>} accent="info" />
-        <Kpi label="Recommended fleet" value="22" suffix="units" foot={<>optimal patrol allocation</>} accent="command" />
-        <Kpi label="Achievable coverage" value="77" suffix="%" foot={
+        <Kpi label="Hotspots" value={stats ? fmt(stats.total_hotspots) : "612"} foot={<>DBSCAN clusters · approved records</>} accent="warning" />
+        <Kpi label="Violations analyzed" value={stats ? fmt(stats.total_violations) : "1,15,350"} foot={<>approved records</>} accent="info" />
+        <Kpi label="Recommended fleet" value={stats ? String(stats.recommended_fleet) : "22"} suffix="units" foot={<>optimal patrol allocation</>} accent="command" />
+        <Kpi label="Achievable coverage" value={stats ? String(stats.coverage_at_recommended_pct) : "77"} suffix="%" foot={
           <span className="flex-1 flex items-center gap-2">
             <span className="flex-1 h-px bg-divider/60 relative overflow-hidden">
-              <span className="absolute inset-y-0 left-0 bg-active" style={{ width: "77%" }} />
+              <span className="absolute inset-y-0 left-0 bg-active" style={{ width: `${covPct}%` }} />
             </span>
           </span>
         } accent="active" />
@@ -109,7 +116,7 @@ function Overview() {
             </Link>
           </div>
           <div className="aspect-[16/10] relative">
-            <HeatMap className="absolute inset-0 w-full h-full" showLabels />
+            <HeatMap className="absolute inset-0 w-full h-full" showLabels points={mapPts.length ? mapPts : undefined} />
             <div className="absolute bottom-3 left-3 flex items-center gap-3 text-[10.5px] text-text-secondary bg-navy/70 border border-divider/40 rounded px-2 py-1">
               <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-critical" /> critical</span>
               <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-warning" /> heavy</span>
@@ -127,7 +134,7 @@ function Overview() {
             <span className="text-[11px] text-text-secondary">5 of 612</span>
           </div>
           <ul className="divide-y divide-divider/30">
-            {topHotspots.map((h) => (
+            {top.map((h) => (
               <li key={h.rank} className="px-4 py-3.5 flex items-center gap-4 hover:bg-panel/40">
                 <div className="font-display text-text-secondary text-[12px] tabular w-5">
                   {h.rank.toString().padStart(2, "0")}

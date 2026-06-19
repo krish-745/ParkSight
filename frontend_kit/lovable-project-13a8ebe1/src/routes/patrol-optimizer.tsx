@@ -1,16 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { HeatMap } from "@/components/heat-map";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import L from "leaflet";
 import { hotspots } from "@/data/mock";
+import { useLive, apiOptimize, apiCoverageCurve, apiRoute, apiGetHotspots, toGeoPoints, type OptimizeResult, type CoverageCurve, type RouteResp, type GeoPoint } from "@/data/api";
 import { Download, Play, Maximize2, Minimize2, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+import "leaflet/dist/leaflet.css";
 
 export const Route = createFileRoute("/patrol-optimizer")({
   head: () => ({
     meta: [
       { title: "Patrol Optimizer — ParkSight" },
       { name: "description", content: "Pick fleet size and shift length, see live coverage on the city map." },
-      { property: "og:title", content: "Patrol Optimizer — ParkSight" },
-      { property: "og:description", content: "Live coverage math for patrol fleet allocation." },
     ],
   }),
   component: PatrolOptimizer,
@@ -19,160 +22,309 @@ export const Route = createFileRoute("/patrol-optimizer")({
 const k = 0.075;
 const coverageAt = (n: number) => 1 - Math.exp(-k * n);
 
+function ImperativeOptimizerMap({
+  points,
+  opt,
+  routeData,
+}: {
+  points: GeoPoint[];
+  opt: OptimizeResult | null;
+  routeData: RouteResp | null;
+}) {
+  const map = useMap();
+  const backgroundLayer = useRef<L.LayerGroup | null>(null);
+  const routeLayer = useRef<L.LayerGroup | null>(null);
+  const patrolLayer = useRef<L.LayerGroup | null>(null);
+
+  // Background dots (dim)
+  useEffect(() => {
+    if (backgroundLayer.current) map.removeLayer(backgroundLayer.current);
+    const group = L.layerGroup();
+    
+    for (const h of points) {
+      let color = "#38b2ac";
+      if (h.intensity > 0.7) color = "#ef4444";
+      else if (h.intensity > 0.4) color = "#f5a623";
+
+      L.circleMarker([h.lat, h.lon], {
+        radius: 2,
+        color: color,
+        fillColor: color,
+        fillOpacity: 0.2,
+        opacity: 0.1,
+        weight: 1,
+        interactive: false,
+      }).addTo(group);
+    }
+    
+    group.addTo(map);
+    backgroundLayer.current = group;
+    return () => { if (backgroundLayer.current) map.removeLayer(backgroundLayer.current); };
+  }, [points, map]);
+
+  // Route Polyline
+  useEffect(() => {
+    if (routeLayer.current) map.removeLayer(routeLayer.current);
+    if (!routeData) return;
+
+    const group = L.layerGroup();
+    
+    const polyline = L.polyline(routeData.polyline as [number, number][], {
+      color: "var(--color-active, #58a6ff)",
+      weight: 3,
+      opacity: 0.85,
+      dashArray: "8, 6",
+      interactive: false,
+    }).addTo(group);
+    
+    map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+
+    group.addTo(map);
+    routeLayer.current = group;
+    return () => { if (routeLayer.current) map.removeLayer(routeLayer.current); };
+  }, [routeData, map]);
+
+  // Patrol Markers
+  useEffect(() => {
+    if (patrolLayer.current) map.removeLayer(patrolLayer.current);
+    if (!opt?.plan?.length) return;
+
+    const group = L.layerGroup();
+
+    opt.plan.forEach((p, i) => {
+      // Coverage circle
+      L.circle([p.lat, p.lon], {
+        radius: opt.cover_radius_m,
+        color: "var(--color-command, #f5a623)",
+        fillColor: "var(--color-command, #f5a623)",
+        fillOpacity: 0.08,
+        weight: 1,
+        dashArray: "4, 4",
+        interactive: false,
+      }).addTo(group);
+
+      // Marker
+      const unitStr = `PU-${(i + 1).toString().padStart(2, "0")}`;
+      const icon = L.divIcon({
+        className: "patrol-icon",
+        html: `<div style="
+          width: 32px; height: 32px; border-radius: 50%;
+          background: var(--color-command, #f5a623); border: 2px solid #fff;
+          display: grid; place-items: center;
+          font-size: 10px; font-weight: 700; color: #000;
+          box-shadow: 0 0 12px rgba(245,166,35,0.4);
+        ">${unitStr}</div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+      });
+
+      L.marker([p.lat, p.lon], { icon, interactive: false }).addTo(group);
+    });
+
+    group.addTo(map);
+    patrolLayer.current = group;
+    return () => { if (patrolLayer.current) map.removeLayer(patrolLayer.current); };
+  }, [opt, map]);
+
+  return null;
+}
+
 function PatrolOptimizer() {
   const [fleet, setFleet] = useState(22);
   const [shift, setShift] = useState(8);
   const [planOpen, setPlanOpen] = useState(true);
+  const [opt, setOpt] = useState<OptimizeResult | null>(null);
+  const [routeData, setRouteData] = useState<RouteResp | null>(null);
+  const curve = useLive<CoverageCurve | null>(() => apiCoverageCurve(60), null);
+  const points = useLive<GeoPoint[]>(() => apiGetHotspots(600).then(toGeoPoints), []);
 
-  const coverage = coverageAt(fleet);
-  const baseline5 = coverageAt(5);
+  // re-optimize (debounced) whenever fleet size changes; clear any drawn route
+  useEffect(() => {
+    let on = true;
+    setRouteData(null);
+    const t = setTimeout(() => { apiOptimize(fleet, 1000).then((r) => on && setOpt(r)).catch(() => {}); }, 400);
+    return () => { on = false; clearTimeout(t); };
+  }, [fleet]);
 
-  const plan = useMemo(
-    () =>
-      [...hotspots]
-        .sort((a, b) => b.violations - a.violations)
-        .slice(0, fleet)
-        .map((h, i) => ({
+  const curveAt = (n: number) =>
+    curve && curve.optimized_pct[n - 1] != null ? curve.optimized_pct[n - 1] / 100 : coverageAt(n);
+  const coverage = opt ? opt.total_coverage_pct / 100 : coverageAt(fleet);
+  const baseline5 = curveAt(5);
+
+  const plan = useMemo(() => {
+    if (opt?.plan?.length) {
+      return opt.plan.map((p, i) => {
+        return {
           unit: `PU-${(i + 1).toString().padStart(2, "0")}`,
-          h,
-          violations: h.violations,
-          km: (3 + (i % 7)).toFixed(1),
-          eta: `${6 + (i % 4)} min`,
-        })),
-    [fleet]
-  );
+          h: { name: p.station },
+          violations: p.hotspots_covered,
+          km: p.impact_covered_pct.toFixed(1),
+          eta: p.recommended_shift.split(" ")[0] ?? `${6 + (i % 4)} min`,
+        };
+      });
+    }
+    return [...hotspots].sort((a, b) => b.violations - a.violations).slice(0, fleet).map((h, i) => ({
+      unit: `PU-${(i + 1).toString().padStart(2, "0")}`, h, violations: h.violations,
+      km: (3 + (i % 7)).toFixed(1), eta: `${6 + (i % 4)} min`,
+    }));
+  }, [opt, fleet]);
+
+  const downloadCsv = () => {
+    const head = "unit,station,hotspots_covered,impact_pct,shift";
+    const rows = plan.map((p) => `${p.unit},${p.h.name},${p.violations},${p.km},${p.eta}`);
+    const blob = new Blob([head + "\n" + rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "deployment_plan.csv"; a.click();
+  };
+  const [isComputing, setIsComputing] = useState(false);
+  const computeRoute = () => { 
+    setIsComputing(true);
+    apiRoute(fleet, 1000).then(res => {
+      setRouteData(res);
+      setIsComputing(false);
+    }).catch(() => { setIsComputing(false); }); 
+  };
 
   // Coverage curve mini-svg
   const W = 260, H = 60;
-  const points = Array.from({ length: 61 }, (_, i) => {
+  const svgPoints = Array.from({ length: 61 }, (_, i) => {
     const x = (i / 60) * W;
-    const y = H - coverageAt(i) * H;
+    const y = H - curveAt(i) * H;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
   const cursorX = (fleet / 60) * W;
   const cursorY = H - coverage * H;
 
-  return (
-    <div className="relative h-[calc(100vh-3.5rem)] overflow-hidden">
-      {/* Full-bleed map */}
-      <HeatMap className="absolute inset-0 w-full h-full" showBlobs showDots={false} showLabels />
+  const [isMapReady, setIsMapReady] = useState(false);
 
-      {/* Deployment markers overlay */}
-      <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 w-full h-full pointer-events-none">
-        {plan.map((p, i) => (
-          <g key={p.unit}>
-            <circle cx={p.h.x} cy={p.h.y} r={4.5} fill="var(--color-command)" fillOpacity="0.1" stroke="var(--color-command)" strokeOpacity="0.55" strokeWidth="0.18" />
-            <circle cx={p.h.x} cy={p.h.y} r={1} fill="var(--color-command)" />
-            {i < 12 && (
-              <text x={p.h.x + 1.4} y={p.h.y + 0.6} fontSize="1.5" fill="var(--color-text-primary)" fontFamily="var(--font-display)">
-                {p.unit}
-              </text>
-            )}
-          </g>
-        ))}
-      </svg>
+  return (
+    <div className="relative h-screen overflow-hidden bg-[#0d1117]">
+      {/* Loading Skeleton */}
+      {(!isMapReady || points.length === 0) && (
+        <div className="absolute inset-0 z-[2000] bg-[#0d1117] flex flex-col items-center justify-center pointer-events-none">
+          <div className="size-16 border-4 border-[#1e2532] border-t-[#38b2ac] rounded-full animate-spin mb-4" />
+          <div className="text-[13px] text-[#8b949e] font-medium tracking-tight animate-pulse">Initializing optimizer grid...</div>
+        </div>
+      )}
+
+      {/* Full-bleed Leaflet Map */}
+      <MapContainer
+        center={[12.972, 77.594]}
+        zoom={12}
+        scrollWheelZoom
+        zoomControl={false}
+        className="absolute inset-0 w-full h-full bg-[#0d1117]"
+        whenReady={() => setIsMapReady(true)}
+      >
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} />
+        <ImperativeOptimizerMap points={points} opt={opt} routeData={routeData} />
+      </MapContainer>
 
       {/* Top-left: controls panel */}
-      <div className="absolute top-5 left-5 w-[340px] rounded-md border border-divider/60 bg-navy/85 backdrop-blur p-4">
-        <div className="flex items-start justify-between mb-1">
+      <div className="absolute top-5 left-5 w-[340px] rounded-xl border border-[#1e2532] bg-[#0f141f]/95 backdrop-blur-md p-5 shadow-2xl z-[1000]">
+        <div className="flex items-start justify-between mb-2">
           <div>
-            <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">Operations</div>
-            <div className="font-display text-[15px] text-text-primary mt-0.5">Patrol Optimizer</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">Operations</div>
+            <div className="font-medium text-[16px] text-[#e6eaf2] tracking-tight mt-0.5">Patrol Optimizer</div>
           </div>
-          <span className="text-[10.5px] text-text-secondary tabular">Bengaluru · Urban Core</span>
+          <span className="text-[10px] text-[#8b949e] font-medium tabular-nums">Bengaluru · Urban Core</span>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-5">
           <SliderRow label="Fleet size" value={fleet} setValue={setFleet} min={1} max={60} unit="units" />
-          <div className="h-3" />
+          <div className="h-4" />
           <SliderRow label="Shift length" value={shift} setValue={setShift} min={4} max={12} unit="hours" />
         </div>
 
         {/* Big coverage readout */}
-        <div className="mt-5 pt-4 border-t border-divider/40">
+        <div className="mt-6 pt-5 border-t border-[#1e2532]">
           <div className="flex items-baseline justify-between">
             <div>
-              <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">Projected coverage</div>
-              <div className="mt-1.5 flex items-baseline gap-1.5">
-                <span className="font-display text-[44px] leading-none font-light tabular text-text-primary">{(coverage * 100).toFixed(0)}</span>
-                <span className="text-text-secondary text-sm">%</span>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">Projected coverage</div>
+              <div className="mt-1.5 flex items-baseline gap-1">
+                <span className="text-[44px] leading-none font-light tabular-nums text-[#e6eaf2]">{(coverage * 100).toFixed(0)}</span>
+                <span className="text-[#8b949e] text-sm">%</span>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">vs 5-unit baseline</div>
-              <div className="mt-1.5 font-display text-[18px] tabular text-active">+{((coverage - baseline5) * 100).toFixed(0)}%</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">vs 5-unit baseline</div>
+              <div className="mt-1.5 text-[18px] font-medium tabular-nums text-active">+{((coverage - baseline5) * 100).toFixed(0)}%</div>
             </div>
           </div>
 
           {/* mini curve */}
-          <svg viewBox={`0 0 ${W} ${H + 10}`} className="mt-3 w-full h-14">
-            <polyline fill="var(--color-command)" fillOpacity="0.12" stroke="none" points={`0,${H} ${points} ${W},${H}`} />
-            <polyline fill="none" stroke="var(--color-command)" strokeWidth="1.2" points={points} />
-            <line x1={cursorX} x2={cursorX} y1={0} y2={H} stroke="var(--color-active)" strokeOpacity="0.5" strokeWidth="0.6" />
-            <circle cx={cursorX} cy={cursorY} r="2.6" fill="var(--color-active)" />
+          <svg viewBox={`0 0 ${W} ${H + 10}`} className="mt-4 w-full h-14">
+            <polyline fill="var(--color-command)" fillOpacity="0.12" stroke="none" points={`0,${H} ${svgPoints} ${W},${H}`} />
+            <polyline fill="none" stroke="var(--color-command)" strokeWidth="1.5" points={svgPoints} />
+            <line x1={cursorX} x2={cursorX} y1={0} y2={H} stroke="var(--color-active)" strokeOpacity="0.5" strokeWidth="1" />
+            <circle cx={cursorX} cy={cursorY} r="3" fill="var(--color-active)" />
           </svg>
-          <div className="flex justify-between text-[10px] text-text-secondary tabular">
+          <div className="flex justify-between text-[10px] text-[#8b949e] font-medium tabular-nums mt-1">
             <span>0 units</span><span>30</span><span>60</span>
           </div>
         </div>
 
-        <div className="mt-4 flex gap-2">
-          <button className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-command text-white text-[12px] py-2 hover:bg-command/90">
-            <Play className="size-3.5" /> Compute route
+        <div className="mt-6 flex gap-3">
+          <button onClick={computeRoute} disabled={isComputing} className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-[#38b2ac] hover:bg-[#319795] text-[#0d1117] font-semibold text-[13px] py-2 transition-colors shadow-sm disabled:opacity-50">
+            {isComputing ? (
+              <span className="animate-pulse">Computing...</span>
+            ) : (
+              <><Play className="size-3.5" /> {routeData ? `Route · ${routeData.total_distance_km.toFixed(0)} km` : "Compute route"}</>
+            )}
           </button>
-          <button className="flex items-center justify-center gap-1.5 rounded-md border border-divider/60 px-3 text-[12px] text-text-secondary hover:text-text-primary hover:border-command/60">
+          <button onClick={downloadCsv} className="flex items-center justify-center gap-1.5 rounded-md border border-[#30363d] bg-[#161b22] px-4 text-[13px] text-[#e6eaf2] font-medium hover:bg-[#21262d] transition-colors shadow-sm">
             <Download className="size-3.5" /> CSV
           </button>
         </div>
       </div>
 
       {/* Bottom-left legend */}
-      <div className="absolute bottom-5 left-5 rounded-md border border-divider/60 bg-navy/85 backdrop-blur px-3 py-2 flex items-center gap-4 text-[10.5px] text-text-secondary">
-        <span className="uppercase tracking-[0.2em]">Markers</span>
-        <div className="flex items-center gap-1.5">
-          <span className="size-2 rounded-full bg-command" /> patrol unit
+      <div className="absolute bottom-5 left-5 rounded-md border border-[#1e2532] bg-[#0f141f]/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-5 text-[11px] text-[#8b949e] font-medium z-[1000] shadow-xl">
+        <span className="uppercase tracking-[0.2em] font-semibold">Markers</span>
+        <div className="flex items-center gap-2">
+          <span className="size-2 rounded-full bg-[var(--color-command)]" /> patrol unit
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="size-2 rounded-full border border-command/60 bg-command/10" /> coverage radius
+        <div className="flex items-center gap-2">
+          <span className="size-2 rounded-full border border-[var(--color-command)] opacity-80" /> coverage radius
         </div>
       </div>
 
       {/* Right: deployment plan drawer */}
       {planOpen ? (
-        <div className="absolute top-5 right-5 bottom-5 w-[360px] rounded-md border border-divider/60 bg-navy/90 backdrop-blur flex flex-col overflow-hidden">
-          <div className="px-4 py-3 border-b border-divider/40 flex items-start justify-between">
+        <div className="absolute top-5 right-5 bottom-5 w-[360px] rounded-xl border border-[#1e2532] bg-[#0f141f]/95 backdrop-blur-md shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right-8 duration-300 z-[1000]">
+          <div className="px-5 py-4 border-b border-[#1e2532] flex items-start justify-between bg-[#161b22]/40">
             <div>
-              <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">Deployment plan</div>
-              <div className="font-display text-[15px] text-text-primary mt-0.5">{fleet} units · sorted by yield</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold mb-1">Deployment plan</div>
+              <div className="font-medium text-[16px] text-[#e6eaf2] tracking-tight">{fleet} units · sorted by yield</div>
             </div>
-            <button onClick={() => setPlanOpen(false)} className="text-text-secondary hover:text-text-primary">
+            <button onClick={() => setPlanOpen(false)} className="text-[#8b949e] hover:text-[#e6eaf2] p-1 rounded-md transition-colors bg-[#161b22]">
               <Minimize2 className="size-4" />
             </button>
           </div>
 
-          <div className="px-4 py-3 border-b border-divider/40 grid grid-cols-3 gap-3 text-[11px]">
+          <div className="px-5 py-4 border-b border-[#1e2532] grid grid-cols-3 gap-3">
             <Mini label="Total km" value={plan.reduce((a, p) => a + parseFloat(p.km), 0).toFixed(0)} />
             <Mini label="Avg ETA" value="7 min" />
-            <Mini label="Marginal +1" value={`+${((coverageAt(fleet + 1) - coverage) * 100).toFixed(2)}%`} tone="info" />
+            <Mini label="Marginal +1" value={`+${Math.max(0, (curveAt(fleet + 1) - coverage) * 100).toFixed(2)}%`} tone="info" />
           </div>
 
-          <div className="flex-1 overflow-auto">
-            <table className="w-full text-[12px]">
-              <thead className="text-text-secondary text-[10px] uppercase tracking-[0.18em] sticky top-0 bg-navy/95">
-                <tr className="border-b border-divider/40">
-                  <th className="text-left font-normal px-3 py-2">Unit</th>
-                  <th className="text-left font-normal px-3 py-2">Area</th>
-                  <th className="text-right font-normal px-3 py-2">Viol.</th>
-                  <th className="text-right font-normal px-3 py-2">ETA</th>
+          <div className="flex-1 overflow-auto scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            <table className="w-full text-[13px]">
+              <thead className="text-[#8b949e] text-[10px] uppercase tracking-[0.2em] font-semibold sticky top-0 bg-[#0f141f]/95 backdrop-blur-sm shadow-sm z-10">
+                <tr>
+                  <th className="text-left px-5 py-3 font-semibold">Unit</th>
+                  <th className="text-left px-2 py-3 font-semibold">Area</th>
+                  <th className="text-right px-2 py-3 font-semibold">Viol.</th>
+                  <th className="text-right px-5 py-3 font-semibold">ETA</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="text-[#e6eaf2] font-medium">
                 {plan.map((p) => (
-                  <tr key={p.unit} className="border-b border-divider/20 hover:bg-panel/30">
-                    <td className="px-3 py-2 font-display text-text-primary tabular">{p.unit}</td>
-                    <td className="px-3 py-2 text-text-primary truncate max-w-[140px]">{p.h.name}</td>
-                    <td className="px-3 py-2 text-right tabular text-text-secondary">{p.violations}</td>
-                    <td className="px-3 py-2 text-right tabular text-text-secondary">{p.eta}</td>
+                  <tr key={p.unit} className="border-b border-[#1e2532]/50 hover:bg-[#161b22] transition-colors">
+                    <td className="px-5 py-3 tabular-nums text-[12px]">{p.unit}</td>
+                    <td className="px-2 py-3 truncate max-w-[140px] text-[13px]">{p.h.name}</td>
+                    <td className="px-2 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.violations}</td>
+                    <td className="px-5 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.eta}</td>
                   </tr>
                 ))}
               </tbody>
@@ -182,9 +334,9 @@ function PatrolOptimizer() {
       ) : (
         <button
           onClick={() => setPlanOpen(true)}
-          className="absolute top-5 right-5 rounded-md border border-divider/60 bg-navy/85 backdrop-blur px-3 py-2 text-[12px] text-text-secondary hover:text-text-primary flex items-center gap-2"
+          className="absolute top-5 right-5 rounded-xl border border-[#1e2532] bg-[#0f141f]/95 backdrop-blur-md px-4 py-2.5 text-[13px] font-medium text-[#8b949e] hover:text-[#e6eaf2] transition-colors shadow-xl flex items-center gap-2 z-[1000]"
         >
-          <Maximize2 className="size-3.5" /> Show plan
+          <Maximize2 className="size-4" /> Show plan
         </button>
       )}
     </div>
@@ -196,10 +348,10 @@ function SliderRow({ label, value, setValue, min, max, unit }: {
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between">
-        <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">{label}</div>
-        <div className="font-display text-[15px] tabular text-text-primary">
-          {value} <span className="text-[10.5px] text-text-secondary">{unit}</span>
+      <div className="flex items-baseline justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">{label}</div>
+        <div className="text-[15px] font-medium tabular-nums text-[#e6eaf2]">
+          {value} <span className="text-[11px] text-[#8b949e] font-normal">{unit}</span>
         </div>
       </div>
       <input
@@ -208,21 +360,23 @@ function SliderRow({ label, value, setValue, min, max, unit }: {
         max={max}
         value={value}
         onChange={(e) => setValue(Number(e.target.value))}
-        className="mt-2 w-full accent-command"
+        className="w-full h-1.5 bg-[#1e2532] rounded-full appearance-none cursor-pointer outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#38b2ac] [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-[#319795] transition-all"
+        style={{
+          background: `linear-gradient(to right, #38b2ac 0%, #38b2ac ${((value - min) / (max - min)) * 100}%, #1e2532 ${((value - min) / (max - min)) * 100}%, #1e2532 100%)`
+        }}
       />
     </div>
   );
 }
 
 function Mini({ label, value, tone = "text" }: { label: string; value: string; tone?: "text" | "info" }) {
-  const color = tone === "info" ? "text-info" : "text-text-primary";
+  const color = tone === "info" ? "text-[#58a6ff]" : "text-[#e6eaf2]";
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">{label}</div>
-      <div className={`mt-1 font-display text-[15px] tabular ${color}`}>{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.18em] text-[#8b949e] font-semibold">{label}</div>
+      <div className={`mt-1 text-[18px] font-medium tabular-nums ${color}`}>{value}</div>
     </div>
   );
 }
 
-// Keep import used to avoid lint warning if drawer collapsed
 void X;

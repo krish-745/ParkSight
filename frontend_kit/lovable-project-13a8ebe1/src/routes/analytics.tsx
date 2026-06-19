@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { peakHours } from "@/data/mock";
+import { useLive, apiTemporal, apiBreakdown, type Temporal, type Breakdown } from "@/data/api";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
@@ -27,7 +28,7 @@ function heatVal(d: number, h: number) {
   return Math.min(1, base * dayWeight + noise * 0.4);
 }
 
-const violationTypes = [
+const violationTypesMock = [
   { name: "No-parking zone", count: 38420, pct: 33, tone: "critical" },
   { name: "Footpath obstruction", count: 24180, pct: 21, tone: "warning" },
   { name: "Double parking", count: 18960, pct: 16, tone: "warning" },
@@ -36,7 +37,7 @@ const violationTypes = [
   { name: "Other", count: 8350, pct: 8, tone: "info" },
 ];
 
-const vehicles = [
+const vehiclesMock = [
   { name: "Two-wheeler", count: 52310, share: 45 },
   { name: "Sedan", count: 31230, share: 27 },
   { name: "SUV / MUV", count: 17880, share: 16 },
@@ -63,6 +64,26 @@ const offenders = [
 
 function Analytics() {
   const [tab, setTab] = useState<Tab>("Temporal");
+  const temporal = useLive<Temporal | null>(apiTemporal, null);
+  const breakdown = useLive<Breakdown | null>(apiBreakdown, null);
+  const matMax = temporal ? Math.max(...temporal.matrix.flat(), 1) : 1;
+  const cellVal = (di: number, h: number) =>
+    temporal ? (temporal.matrix[di]?.[h] ?? 0) / matMax : heatVal(di, h);
+  const totV = breakdown ? breakdown.violation_types.reduce((a, v) => a + v.count, 0) : 1;
+  const violationTypes = breakdown
+    ? breakdown.violation_types.slice(0, 6).map((v, i) => ({
+        name: v.name.replace(/_/g, " ").replace("PARKING", "Parking"),
+        count: v.count, pct: Math.round((v.count / totV) * 100),
+        tone: i % 3 === 0 ? "critical" : i % 3 === 1 ? "warning" : "info",
+      }))
+    : violationTypesMock;
+  const totVeh = breakdown ? breakdown.vehicle_types.reduce((a, v) => a + v.count, 0) : 1;
+  const vehicles = breakdown
+    ? breakdown.vehicle_types.slice(0, 5).map((v) => ({
+        name: v.name, count: v.count, share: Math.round((v.count / totVeh) * 100),
+      }))
+    : vehiclesMock;
+  const topVeh = vehicles[0] ?? vehiclesMock[0];
 
   return (
     <div className="px-6 lg:px-10 py-8 space-y-8 max-w-[1500px]">
@@ -117,7 +138,7 @@ function Analytics() {
               </div>
             ))}
             {days.map((d, di) => (
-              <Row key={d} day={d} di={di} />
+              <Row key={d} day={d} di={di} val={cellVal} />
             ))}
           </div>
 
@@ -168,8 +189,8 @@ function Analytics() {
           </div>
           <div className="rounded-md border border-divider/50 bg-panel/20 p-6">
             <div className="text-[10.5px] uppercase tracking-[0.2em] text-text-secondary">Top class</div>
-            <div className="mt-3 font-display text-[44px] font-light leading-none tabular">45<span className="text-lg text-text-secondary">%</span></div>
-            <div className="mt-2 text-[13px] text-text-primary">Two-wheelers</div>
+            <div className="mt-3 font-display text-[44px] font-light leading-none tabular">{topVeh.share}<span className="text-lg text-text-secondary">%</span></div>
+            <div className="mt-2 text-[13px] text-text-primary">{topVeh.name}</div>
             <div className="mt-1 text-[12px] text-text-secondary">
               account for nearly half of all logged violations — concentrate footpath patrols.
             </div>
@@ -244,12 +265,12 @@ function Analytics() {
   );
 }
 
-function Row({ day, di }: { day: string; di: number }) {
+function Row({ day, di, val }: { day: string; di: number; val: (d: number, h: number) => number }) {
   return (
     <>
       <div className="text-[10.5px] text-text-secondary pr-2 self-center">{day}</div>
       {hours.map((h) => {
-        const v = heatVal(di, h);
+        const v = val(di, h);
         const color = v > 0.7 ? "var(--color-critical)" : v > 0.45 ? "var(--color-warning)" : "var(--color-info)";
         return (
           <div key={h} className="aspect-square m-[1px] rounded-[2px]" style={{ background: color, opacity: 0.15 + v * 0.8 }} title={`${day} ${h}:00 · ${(v * 100).toFixed(0)}`} />
