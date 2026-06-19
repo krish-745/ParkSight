@@ -24,8 +24,8 @@ from sklearn.neighbors import BallTree
 
 warnings.filterwarnings("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-OUTPUT_DIR = os.path.join(HERE, "output")
+ROOT = os.path.dirname(HERE)               # repo root
+OUTPUT_DIR = os.path.join(ROOT, "output")
 GRAPH_PATH = os.path.join(ROOT, "data", "blr_graph.graphml")
 EARTH_M = 6371000.0
 COVER_RADIUS_M = 1000     # one patrol's effective coverage radius

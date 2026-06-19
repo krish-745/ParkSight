@@ -13,8 +13,9 @@ import sys
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROJ = os.path.dirname(HERE)                 # Flipkart_Round2/
-sys.path.insert(0, PROJ)                      # to import enforcement_optimizer
+PROJ = os.path.dirname(HERE)                 # repo root
+ANALYSIS = os.path.join(PROJ, "analysis")
+sys.path.insert(0, ANALYSIS)                 # to import enforcement_optimizer
 OUT = os.path.join(PROJ, "output")
 APP_DATA = os.path.join(HERE, "data")
 os.makedirs(APP_DATA, exist_ok=True)

@@ -13,17 +13,15 @@ import numpy as np
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 
 import core
 from data import get_store
 from schemas import (Stats, Hotspot, OptimizeRequest, OptimizeResponse, CoverageCurve,
-                     RouteRequest, RouteResponse)
+                     RouteRequest, RouteResponse, BlindSpotsResponse)
 
 logger = logging.getLogger("parksight")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FRONTEND = os.path.join(HERE, "frontend", "index.html")
 
 app = FastAPI(
     title="ParkSight API",
@@ -32,12 +30,6 @@ app = FastAPI(
 )
 # Frontend is hosted separately (design tool / static build) -> allow cross-origin during dev.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-
-@app.get("/", include_in_schema=False)
-def home():
-    """Serve the dashboard UI."""
-    return FileResponse(FRONTEND)
 
 
 @app.get("/health")
@@ -270,3 +262,19 @@ def temporal():
 def breakdown():
     """Violation-type and vehicle-type distributions for bar charts."""
     return get_store().breakdown()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Enforcement Blind Spots
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/blindspots", response_model=BlindSpotsResponse)
+def blindspots(top_n: int = Query(30, ge=5, le=100)):
+    """Zones with high predicted impact but low current enforcement activity.
+
+    Returns zones where the blind-spot score is positive, sorted highest-first.
+    Frame as 'relative under-coverage', not absolute proof of absence.
+    """
+    return get_store().blindspots(top_n=top_n)
+

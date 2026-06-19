@@ -36,7 +36,7 @@ def _find_data():
             return hits[0]
     raise FileNotFoundError("parking violation CSV not found in Flipkart_Round2/ or its parent")
 DATA_PATH = _find_data()
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # DBSCAN Parameters
