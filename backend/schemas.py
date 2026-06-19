@@ -99,3 +99,31 @@ class RouteResponse(BaseModel):
     total_time_min: float
     polyline: List[List[float]]      # [[lat, lon], ...] road-snapped or straight-line
     route_source: str                # "osrm" or "haversine_fallback"
+
+
+# ── Enforcement Blind Spots ──
+
+class BlindSpot(BaseModel):
+    id: int
+    rank: int                       # original hotspot rank
+    lat: float
+    lon: float
+    station: str
+    dominant_violation: str
+    dominant_junction: str
+    violations: int
+    impact: float
+    cii_normalized: float           # 0-100 impact score
+    impact_rank: int                # 1 = highest impact (ascending importance)
+    enforcement_rank: int           # 1 = most enforced (ascending = more police presence)
+    blind_spot_score: float         # higher = more under-covered relative to impact
+    severity: str                   # "Critical" | "High" | "Moderate"
+    shift: str
+
+
+class BlindSpotsResponse(BaseModel):
+    total_blind_spots: int
+    critical_count: int
+    high_count: int
+    moderate_count: int
+    zones: List[BlindSpot]

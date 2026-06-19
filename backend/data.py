@@ -135,6 +135,84 @@ class Store:
             vehicle_types=[{"name": str(k), "count": int(v)} for k, v in veh.items()],
         )
 
+    @lru_cache(maxsize=1)
+    def blindspots(self, top_n: int = 30):
+        """Identify zones with high congestion impact but low enforcement activity.
+
+        Enforcement proxy: violations-per-zone within the same police station.
+        A zone is a blind spot if its impact rank is much higher than its enforcement rank.
+        blind_spot_score = normalised(impact_rank_desc) - normalised(enforcement_rank_desc)
+        We only return zones where the score is positive (impact >> enforcement).
+        """
+        hs = self.hs.copy()
+        n = len(hs)
+
+        # ── Impact rank (1 = highest CII) ──
+        # Sort descending by cii_normalized; rank 1 = most impactful
+        hs["_impact_rank"] = hs["cii_normalized"].rank(ascending=False, method="min").astype(int)
+
+        # ── Enforcement proxy ──
+        # For each police station, compute avg violations per zone.
+        # A zone that sits in a high-activity station AND has high violation count itself
+        # is considered "well-enforced". We use:
+        #   enforcement_score = violation_count / (station_mean_violations)
+        # normalised to 0-100. Higher = more patrolled relative to peers.
+        station_mean = hs.groupby("dominant_police_station")["violation_count"].transform("mean")
+        hs["_enforcement_score"] = (hs["violation_count"] / station_mean.clip(lower=1)) * 50.0
+        # Also factor in cii_density (violations per area): denser = harder to miss
+        if "cii_density" in hs.columns:
+            density_norm = hs["cii_density"] / hs["cii_density"].max() * 50.0
+            hs["_enforcement_score"] = hs["_enforcement_score"] + density_norm
+        hs["_enforcement_score"] = hs["_enforcement_score"].clip(upper=100.0)
+
+        # enforcement rank: 1 = most enforced
+        hs["_enforcement_rank"] = hs["_enforcement_score"].rank(ascending=False, method="min").astype(int)
+
+        # ── Blind-spot score ──
+        # Normalise ranks to [0,1] (lower rank number = better, so invert)
+        impact_pct = 1.0 - (hs["_impact_rank"] - 1) / max(n - 1, 1)   # 1 = most impactful
+        enf_pct    = 1.0 - (hs["_enforcement_rank"] - 1) / max(n - 1, 1)  # 1 = most enforced
+        hs["_bss"] = (impact_pct - enf_pct).clip(lower=0.0)
+
+        # Keep only zones that are genuinely under-covered (bss > 0)
+        df = hs[hs["_bss"] > 0].sort_values("_bss", ascending=False).head(top_n)
+
+        def _severity(score):
+            if score >= 0.4: return "Critical"
+            if score >= 0.2: return "High"
+            return "Moderate"
+
+        zones = []
+        for _, r in df.iterrows():
+            zones.append(dict(
+                id=int(r.id),
+                rank=int(r["rank"]),
+                lat=float(r.centroid_lat),
+                lon=float(r.centroid_lon),
+                station=str(r.dominant_police_station),
+                dominant_violation=str(r.dominant_violation_type),
+                dominant_junction=str(r.dominant_junction),
+                violations=int(r.violation_count),
+                impact=round(float(r.impact), 2),
+                cii_normalized=round(float(r.cii_normalized), 1),
+                impact_rank=int(r["_impact_rank"]),
+                enforcement_rank=int(r["_enforcement_rank"]),
+                blind_spot_score=round(float(r["_bss"]), 3),
+                severity=_severity(float(r["_bss"])),
+                shift=shift_window(int(r.peak_hour)),
+            ))
+
+        critical = sum(1 for z in zones if z["severity"] == "Critical")
+        high     = sum(1 for z in zones if z["severity"] == "High")
+        mod      = sum(1 for z in zones if z["severity"] == "Moderate")
+        return dict(
+            total_blind_spots=len(zones),
+            critical_count=critical,
+            high_count=high,
+            moderate_count=mod,
+            zones=zones,
+        )
+
 
 _store = None
 
