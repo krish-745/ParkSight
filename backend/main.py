@@ -29,7 +29,14 @@ app = FastAPI(
     description="AI-driven parking-congestion intelligence + enforcement deployment optimizer.",
 )
 # Frontend is hosted separately (design tool / static build) -> allow cross-origin during dev.
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:8080", "http://127.0.0.1:5173", "http://127.0.0.1:8080", "http://localhost:3000"],
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", include_in_schema=False)
