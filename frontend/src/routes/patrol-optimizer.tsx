@@ -112,7 +112,7 @@ function PatrolOptimizer() {
         <Suspense fallback={null}>
           <PatrolMapCanvas
             points={points}
-            opt={validOpt}
+            opt={opt}
             routeData={routeData}
             onReady={() => setIsMapReady(true)}
           />
