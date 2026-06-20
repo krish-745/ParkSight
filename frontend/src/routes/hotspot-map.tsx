@@ -93,18 +93,12 @@ function HotspotMapPage() {
 
   const toggleLayer = (id: string) => setLayers((ls) => ls.map((l) => (l.id === id ? { ...l, on: !l.on } : l)));
 
-  const handleSearch = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const query = window.prompt("Enter cluster ID (e.g. H-102) or station name:");
-    if (!query) return;
-    const match = points.find(p => p.id.toLowerCase() === query.toLowerCase() || p.name.toLowerCase().includes(query.toLowerCase()));
-    if (match) {
-      setSelected(match);
-      setDrawerOpen(true);
-    } else {
-      window.alert("No cluster found matching: " + query);
-    }
-  };
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  
+  const searchResults = searchQuery.length > 1
+    ? points.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 5)
+    : [];
 
   // clear any displacement overlay when the selected hotspot changes
   useEffect(() => { setDisplacement(null); }, [selected]);
@@ -151,27 +145,73 @@ function HotspotMapPage() {
       {/* Floating layer control */}
       <div className={cn(
         "absolute top-5 left-5 w-[280px] rounded-xl border border-[#1e2532] bg-[#0f141f]/95 backdrop-blur-md shadow-2xl transition-all duration-300 overflow-hidden z-[1000]",
-        layersOpen ? "max-h-[500px] p-5 pb-4" : "max-h-[64px] p-0",
+        (layersOpen || searchOpen) ? "max-h-[500px] pb-4" : "max-h-[64px] p-0",
       )}>
         <div
-          className={cn("flex items-start justify-between cursor-pointer", !layersOpen && "px-5 py-4")}
-          onClick={() => setLayersOpen(!layersOpen)}
+          className={cn("flex items-start justify-between cursor-pointer", !(layersOpen || searchOpen) ? "px-5 py-4" : "px-5 pt-5")}
+          onClick={() => { setLayersOpen(!layersOpen); setSearchOpen(false); }}
         >
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold mb-1">Map</div>
             <div className="font-medium text-[16px] text-[#e6eaf2] tracking-tight">Bengaluru · Urban Core</div>
           </div>
           <div className="flex gap-2">
-            <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" onClick={handleSearch}>
+            <button className={cn("transition-colors p-1", searchOpen ? "text-[#38b2ac]" : "text-[#8b949e] hover:text-[#e6eaf2]")} onClick={(e) => { e.stopPropagation(); setSearchOpen(!searchOpen); if (!searchOpen) setLayersOpen(false); }}>
               <Search className="size-[18px]" />
             </button>
-            <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" aria-label="Toggle Layers">
+            <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" aria-label="Toggle Layers" onClick={(e) => { e.stopPropagation(); setLayersOpen(!layersOpen); if (!layersOpen) setSearchOpen(false); }}>
               {layersOpen ? <ChevronUp className="size-[18px]" /> : <ChevronDown className="size-[18px]" />}
             </button>
           </div>
         </div>
 
-        <div className={cn("transition-opacity duration-300", layersOpen ? "opacity-100" : "opacity-0 pointer-events-none hidden")}>
+        {searchOpen && (
+          <div className="px-5 pt-4" onClick={(e) => e.stopPropagation()}>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 size-4 text-[#8b949e]" />
+              <input
+                type="text"
+                autoFocus
+                placeholder="Search area..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#161b22] border border-[#30363d] rounded-md py-2 pl-9 pr-8 text-[13px] text-[#e6eaf2] placeholder:text-[#8b949e] outline-none focus:border-[#38b2ac] transition-colors"
+              />
+              {searchQuery && (
+                <button 
+                  className="absolute right-2.5 top-2.5 text-[#8b949e] hover:text-[#e6eaf2]"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="size-4" />
+                </button>
+              )}
+            </div>
+            
+            {searchQuery.length > 1 && (
+              <div className="mt-3 max-h-[240px] overflow-y-auto scrollbar-none space-y-1">
+                {searchResults.length > 0 ? searchResults.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setSelected(p);
+                      setDrawerOpen(true);
+                      setSearchOpen(false);
+                      setSearchQuery("");
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-[#161b22] flex flex-col transition-colors border border-transparent hover:border-[#30363d]"
+                  >
+                    <span className="text-[13px] text-[#e6eaf2] font-medium truncate">{p.name}</span>
+                    <span className="text-[11px] text-[#8b949e] truncate mt-0.5">{p.violations} violations · {p.dominant_violation}</span>
+                  </button>
+                )) : (
+                  <div className="text-[12px] text-[#8b949e] text-center py-4">No areas found</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className={cn("transition-opacity duration-300 px-5", layersOpen ? "opacity-100" : "opacity-0 pointer-events-none hidden")}>
           <div className="mt-5 mb-3 text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">Layers</div>
           <div className="space-y-3.5 mb-5">
             {layers.map((l) => (
