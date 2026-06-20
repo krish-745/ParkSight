@@ -13,6 +13,8 @@
 > **AI-driven hotspot analysis and patrol-deployment optimizer for Bengaluru Traffic Police.**
 > Built for Flipkart Gridlock 2.0 Round 2 (PS2 — Poor Visibility on Parking-Induced Congestion).
 
+**Live Demo:** [https://park-sight.pages.dev/](https://park-sight.pages.dev/)
+
 ParkSight turns 115,000+ anonymized parking violation records into an actionable enforcement command center: it finds where violations hurt most, deploys limited patrol units for maximum impact, surfaces the zones being missed today (enforcement blind spots), shows how congestion shifts hour-by-hour, models where demand displaces when a hotspot is cleared, and plots the optimal driving circuit for each shift.
 
 ---
