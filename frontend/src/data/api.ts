@@ -4,8 +4,8 @@
 import { useEffect, useState } from "react";
 import type { Hotspot } from "./mock";
 
-export const API_BASE =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_API_URL ?? "http://localhost:8000";
+// @ts-ignore - Vite statically replaces this exact string
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // ---- raw API types ----
 export interface Stats {
