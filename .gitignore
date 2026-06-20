@@ -48,7 +48,10 @@ venv.bak/
 # ── Data & generated outputs ─────────────────────────────────────────────────
 # Raw data CSVs are too large for git (gitattributes handles LFS if needed)
 *.csv
-output/
+!backend/output/hotspot_summary.csv
+!backend/output/clustered_violations.csv
+backend/output/*
+!backend/output/*.csv
 
 # OSM road graph cache (large binary — regenerate with precompute.py)
 data/blr_graph.graphml

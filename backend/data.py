@@ -16,7 +16,7 @@ from core import CoverageIndex, shift_window
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
-OUT = os.path.join(PROJ, "output")
+OUT = os.path.join(HERE, "output")
 APP_DATA = os.path.join(HERE, "data")
 
 _ENRICHED = os.path.join(APP_DATA, "hotspots_enriched.csv")
