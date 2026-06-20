@@ -284,3 +284,48 @@ def blindspots(top_n: int = Query(30, ge=5, le=100)):
     """
     return get_store().blindspots(top_n=top_n)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Raw violation sample (for the 'raw violations' map layer)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/violations")
+def violations(limit: int = Query(2000, ge=100, le=8000)):
+    """A deterministic sample of individual violation points for the raw-violations
+    map layer (the full ~115k set is too dense to render client-side)."""
+    return get_store().raw_violations(limit=limit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Graph-diffusion congestion forecaster  (flow algorithm + learned weights)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/hotspot-hourly")
+def hotspot_hourly():
+    """Real per-hotspot 24-hour intensity profile (normalised 0..1) — powers the
+    time-of-day scrubber on the map."""
+    return get_store().flow.hourly()
+
+
+@app.get("/api/forecast")
+def forecast(hour: int = Query(..., ge=0, le=23), steps: int = Query(1, ge=1, le=6)):
+    """Predict the hotspot heatmap `steps` hours ahead of `hour` by rolling the learned
+    graph-diffusion operator forward. Returns now / predicted / actual per hotspot."""
+    return get_store().flow.forecast(hour=hour, steps=steps)
+
+
+@app.get("/api/flow-graph")
+def flow_graph(max_edges: int = Query(400, ge=20, le=2000)):
+    """The learned diffusion graph (strongest spill-over edges) + fitted parameters
+    (alpha/beta/sigma) and diagnostics."""
+    return get_store().flow.graph(max_edges=max_edges)
+
+
+@app.get("/api/displacement/{hotspot_id}")
+def displacement(hotspot_id: int, steps: int = Query(4, ge=1, le=10), top: int = Query(12, ge=1, le=40)):
+    """If this hotspot is cleared/enforced, where does the displaced parking demand flow?
+    Random walk over the learned spill-over graph."""
+    return get_store().flow.displacement(source_id=hotspot_id, steps=steps, top=top)
+

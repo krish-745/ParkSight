@@ -1,21 +1,20 @@
 # ParkSight — Parking-Congestion Enforcement Intelligence
 
 > **AI-driven hotspot analysis and patrol-deployment optimizer for Bengaluru Traffic Police.**
-> Built for Flipkart Gridlock 2.0 Round 2.
+> Built for Flipkart Gridlock 2.0 Round 2 (PS2 — Poor Visibility on Parking-Induced Congestion).
 
-ParkSight turns 115,000+ anonymized parking violation records into an actionable enforcement command center: it finds where violations hurt most, deploys limited patrol units for maximum impact, surfaces the zones being missed today (enforcement blind spots), and plots the optimal driving circuit for each shift.
+ParkSight turns 115,000+ anonymized parking violation records into an actionable enforcement command center: it finds where violations hurt most, deploys limited patrol units for maximum impact, surfaces the zones being missed today (enforcement blind spots), shows how congestion shifts hour-by-hour, models where demand displaces when a hotspot is cleared, and plots the optimal driving circuit for each shift.
 
 ---
 
 ## Table of Contents
 
-- [Demo Screenshots](#demo-screenshots)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
   - [1 — Backend (FastAPI)](#1--backend-fastapi)
-  - [2 — Frontend (Next.js)](#2--frontend-nextjs)
+  - [2 — Frontend (Vite + TanStack)](#2--frontend-vite--tanstack)
 - [API Reference](#api-reference)
 - [Data Pipeline](#data-pipeline)
 - [Analysis Scripts](#analysis-scripts)
@@ -23,71 +22,70 @@ ParkSight turns 115,000+ anonymized parking violation records into an actionable
 
 ---
 
-## Demo Screenshots
-
-| Command Center | Analytics — Blind Spots | Analytics — Patrol Route |
-|:---:|:---:|:---:|
-| ![Command Center](frontend/command.png) | ![Analytics](frontend/analytics.png) | ![Coverage Curve](frontend/curve.png) |
-
----
-
 ## Features
 
 | # | Feature | Description |
 |---|---------|-------------|
-| 1 | **Patrol Route Optimizer** | TSP-optimal driving circuit through patrol stations — road-snapped via OSRM with nearest-neighbour + 2-opt improvement. Returns total km, ETA, and ordered stop list. |
-| 2 | **Enforcement Blind Spots** | Surfaces zones with high congestion impact but low enforcement proxy — the areas being missed today. Ranked by a blind-spot score with Critical / High / Moderate severity. |
-| 3 | **Congestion Impact Optimizer** | Greedy max-coverage deployment: picks K patrol stations to cover the most road-capacity-weighted impact (within 1−1/e of optimal). Benchmarked against even-spread and volume-only baselines. |
-| 4 | **Coverage vs Fleet Curve** | Diminishing-returns chart across fleet sizes with automatic elbow detection → recommended fleet size. |
-| 5 | **Temporal Heatmap** | 7-day × 24-hour violation matrix revealing shift-level enforcement gaps (evening under-coverage). |
-| 6 | **Violation & Vehicle Breakdown** | Bar charts by violation type, vehicle type, and police station jurisdiction. |
-| 7 | **Interactive Hotspot Map** | 612 hotspots color-coded by congestion impact; patrol coverage radii overlaid; route circuit animated. |
+| 1 | **Interactive Hotspot Map** | 612 DBSCAN hotspots on a real Leaflet map, color-coded by congestion impact. Toggle-able layers: hotspot clusters, **hexbin congestion** (canvas hex-grid density), **blind spots**, and **raw violations** (sampled points). |
+| 2 | **Time Machine (hour scrubber)** | A 0–23h slider + playback that animates how the hotspot heatmap shifts across the day, driven by real historical violation timing (time-of-day climatology). |
+| 3 | **Spill-over / Displacement** | Click a hotspot → a learned graph random-walk traces where parking demand re-routes if it is enforced/cleared, so enforcement avoids whack-a-mole. |
+| 4 | **Enforcement Blind Spots** | Zones with high congestion impact but low enforcement proxy — the areas being missed today. Ranked by a blind-spot score with Critical / High / Moderate severity. |
+| 5 | **Patrol Optimizer + Coverage Curve** | Greedy max-coverage deployment (within 1−1/e of optimal): picks K patrol stations to cover the most road-capacity-weighted impact. Diminishing-returns curve with elbow → recommended fleet size, benchmarked vs even-spread and volume-only baselines. |
+| 6 | **Patrol Route Optimizer** | TSP-optimal driving circuit (nearest-neighbour + 2-opt), road-snapped via OSRM. Returns total km, ETA, and ordered stop list. |
+| 7 | **Temporal Heatmap & Breakdowns** | 7-day × 24-hour violation matrix + violation-type / vehicle-type distributions. |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────┐        HTTP / Next.js proxy
-│   frontend/  (Next.js)  │  ──────────────────────────►  ┌──────────────────────────┐
-│                         │                                │  backend/  (FastAPI)     │
-│  Pages                  │  ◄────────────────────────────  │                          │
-│  ├─ /command            │        JSON responses          │  Endpoints               │
-│  └─ /analytics          │                                │  ├─ /api/stats           │
-│                         │                                │  ├─ /api/hotspots        │
-│  Components             │                                │  ├─ /api/optimize        │
-│  ├─ HotspotMap          │                                │  ├─ /api/route  (TSP)    │
-│  ├─ PatrolOptimizer     │                                │  ├─ /api/blindspots      │
-│  ├─ BlindSpotsPanel     │                                │  ├─ /api/coverage-curve  │
-│  ├─ RouteOptimizerPanel │                                │  ├─ /api/temporal        │
-│  └─ CoverageCurveChart  │                                │  └─ /api/breakdown       │
-└─────────────────────────┘                                └──────────────────────────┘
-                                                                        │
-                                                           reads once at startup
-                                                                        │
-                                                           ┌────────────▼─────────────┐
-                                                           │  output/                 │
-                                                           │  ├─ hotspot_summary.csv  │
-                                                           │  └─ clustered_violations │
-                                                           │       .csv               │
-                                                           └──────────────────────────┘
+┌─────────────────────────────┐     HTTP (CORS) → VITE_API_URL      ┌──────────────────────────┐
+│  frontend/  (Vite +         │  ─────────────────────────────────► │  backend/  (FastAPI)     │
+│  TanStack Start/Router)     │                                      │                          │
+│                             │  ◄───────────────────────────────── │  Endpoints               │
+│  Routes                     │           JSON responses             │  ├─ /api/stats           │
+│  ├─ /              overview │                                      │  ├─ /api/hotspots        │
+│  ├─ /hotspot-map           │                                      │  ├─ /api/optimize        │
+│  ├─ /patrol-optimizer      │                                      │  ├─ /api/route   (TSP)   │
+│  └─ /analytics             │                                      │  ├─ /api/blindspots      │
+│                             │                                      │  ├─ /api/coverage-curve  │
+│  Key components             │                                      │  ├─ /api/temporal        │
+│  ├─ mini-map.tsx           │                                      │  ├─ /api/breakdown       │
+│  └─ app-shell.tsx          │                                      │  ├─ /api/violations      │
+│                             │                                      │  ├─ /api/hotspot-hourly  │
+│  data/api.ts (typed fetch)  │                                      │  ├─ /api/forecast        │
+│                             │                                      │  ├─ /api/flow-graph      │
+│                             │                                      │  └─ /api/displacement/{} │
+└─────────────────────────────┘                                      └──────────────────────────┘
+                                                                                 │
+                                                                    reads once at startup
+                                                                                 │
+                                                                    ┌────────────▼─────────────┐
+                                                                    │  output/                 │
+                                                                    │  ├─ hotspot_summary.csv  │
+                                                                    │  └─ clustered_violations │
+                                                                    │       .csv               │
+                                                                    └──────────────────────────┘
 ```
+
+The frontend calls the backend directly over CORS (no dev proxy); the base URL is `VITE_API_URL`, defaulting to `http://localhost:8000`.
 
 **Data flow:**
 1. Raw CSV → `analysis/parking_hotspot_analysis.py` → `output/hotspot_summary.csv` + `output/clustered_violations.csv`
 2. *(Optional)* `backend/precompute.py` → enriches hotspots with OSM road geometry → `backend/data/hotspots_enriched.csv`
-3. FastAPI reads the CSVs once at startup, serves JSON to the Next.js frontend
+3. FastAPI reads the CSVs once at startup and serves JSON; the graph-diffusion model (`flow_model.py`) is built lazily on first request to the flow endpoints.
 
 ---
 
 ## Project Structure
 
 ```
-ParkSight/
+Flipkart_Round2/
 ├── backend/                  # FastAPI API server
 │   ├── main.py               # All endpoints
 │   ├── core.py               # Coverage optimizer + TSP solver (pure numpy)
-│   ├── data.py               # Data loading, blind-spots, stats (cached)
+│   ├── data.py               # Data loading, blind-spots, stats (cached); lazy flow model
+│   ├── flow_model.py         # Graph-diffusion forecaster: hourly profiles + displacement
 │   ├── schemas.py            # Pydantic request/response models
 │   ├── precompute.py         # One-time OSM road-grounding step
 │   ├── requirements.txt
@@ -95,41 +93,34 @@ ParkSight/
 │   └── data/
 │       └── hotspots_enriched.csv   # (gitignored — generated by precompute.py)
 │
-├── frontend/                 # Next.js 15 dashboard
-│   ├── app/
-│   │   └── (dashboard)/
-│   │       ├── command/      # Command Center page
-│   │       └── analytics/    # Analytics page (Temporal, Blind Spots, Patrol Route, …)
-│   ├── components/
-│   │   ├── hotspot-map.tsx
-│   │   ├── blind-spots-panel.tsx
-│   │   ├── route-optimizer-panel.tsx
-│   │   ├── patrol-route-map.tsx
-│   │   ├── patrol-route-layer.tsx
-│   │   ├── patrol-optimizer.tsx
-│   │   ├── coverage-curve-chart.tsx
-│   │   ├── deployment-plan-table.tsx
-│   │   ├── temporal-heatmap.tsx
-│   │   └── breakdown-bar-chart.tsx
-│   ├── lib/
-│   │   ├── api.ts            # Typed fetch helpers for all endpoints
-│   │   ├── types.ts          # TypeScript interfaces
-│   │   ├── stations.ts       # Station name list
-│   │   └── format.ts         # heatColor, formatIN utilities
-│   ├── .env.local.example    # Copy to .env.local for local dev
-│   └── next.config.mjs       # Proxies /api/* → localhost:8000
+├── frontend/                 # Vite + TanStack Start/Router dashboard
+│   ├── src/
+│   │   ├── routes/           # File-based routes
+│   │   │   ├── __root.tsx
+│   │   │   ├── index.tsx           # City Overview
+│   │   │   ├── hotspot-map.tsx     # Map + layers + Time Machine + displacement
+│   │   │   ├── patrol-optimizer.tsx
+│   │   │   └── analytics.tsx
+│   │   ├── components/
+│   │   │   ├── app-shell.tsx
+│   │   │   └── mini-map.tsx        # Compact interactive Leaflet tile (homepage)
+│   │   ├── data/
+│   │   │   ├── api.ts              # Typed fetch helpers + transforms for all endpoints
+│   │   │   └── mock.ts             # SSR fallbacks
+│   │   ├── lib/utils.ts
+│   │   └── styles.css
+│   ├── vite.config.ts
+│   └── package.json
 │
 ├── analysis/                 # Offline data-science scripts (run once)
 │   ├── parking_hotspot_analysis.py   # DBSCAN clustering + hotspot scoring
 │   ├── validate_clustering.py        # Cluster validation + seasonal R² test
 │   └── enforcement_optimizer.py      # OSM road-grounding (used by precompute.py)
 │
-├── output/                   # Generated data + plots (gitignored)
-│   ├── hotspot_summary.csv
-│   ├── clustered_violations.csv
-│   └── *.png
-│
-└── jan to may police violation_anonymized791b166.csv   # Raw data (gitignored)
+└── output/                   # Generated data + plots (gitignored)
+    ├── hotspot_summary.csv
+    ├── clustered_violations.csv
+    └── *.png                 # cii_distribution, coverage_curve, temporal_heatmap, …
 ```
 
 ---
@@ -139,47 +130,39 @@ ParkSight/
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 20+ and [pnpm](https://pnpm.io/)
-- The raw violation CSV (placed in the repo root)
+- Node.js 20+ (npm; the project also has a `bun.lock` if you prefer bun)
+- The generated `output/` CSVs (already present; regenerate with the analysis pipeline if missing)
 
 ### 1 — Backend (FastAPI)
 
 ```bash
-# Install dependencies
 cd backend
 pip install -r requirements.txt
 
-# (Only if output/ doesn't exist yet) Run the analysis pipeline
-cd ..
-python analysis/parking_hotspot_analysis.py
-
-# (Optional) Enrich hotspots with OSM road geometry
-# Requires osmnx — skip if hotspot_summary.csv already exists
-python backend/precompute.py
+# (Only if output/ doesn't exist yet) run the analysis pipeline from the repo root
+#   python analysis/parking_hotspot_analysis.py
+# (Optional) enrich hotspots with OSM road geometry — needs osmnx
+#   python backend/precompute.py
 
 # Start the API server
-cd backend
-uvicorn main:app --reload --port 8000
+python -m uvicorn main:app --reload --port 8000
 ```
 
 Interactive API docs: **http://localhost:8000/docs**
 
-### 2 — Frontend (Next.js)
+### 2 — Frontend (Vite + TanStack)
 
 ```bash
 cd frontend
+npm install
 
-# Copy environment config
-cp .env.local.example .env.local   # points to localhost:8000
+# Optional: point at a non-default backend
+#   echo "VITE_API_URL=http://localhost:8000" > .env
 
-# Install dependencies
-pnpm install
-
-# Start dev server
-pnpm dev
+npm run dev
 ```
 
-Open **http://localhost:3000** — the Next.js proxy forwards all `/api/*` calls to the FastAPI backend automatically.
+Open the Vite dev server (default **http://localhost:8080**). The app fetches the backend directly at `VITE_API_URL` (default `http://localhost:8000`), so the backend must be running.
 
 ---
 
@@ -188,7 +171,7 @@ Open **http://localhost:3000** — the Next.js proxy forwards all `/api/*` calls
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Liveness check |
-| `GET` | `/api/stats` | Dashboard KPIs: total hotspots, violations, recommended fleet, peak window |
+| `GET` | `/api/stats` | Dashboard KPIs: hotspots, violations, recommended fleet, peak window |
 | `GET` | `/api/hotspots` | All hotspots for the map/table — filterable by `violation`, `station`, `min_cii`, `limit` |
 | `GET` | `/api/hotspots/{id}` | Single hotspot detail |
 | `POST` | `/api/optimize` | Greedy max-coverage patrol plan · body: `{num_patrols, cover_radius_m}` |
@@ -197,6 +180,11 @@ Open **http://localhost:3000** — the Next.js proxy forwards all `/api/*` calls
 | `GET` | `/api/blindspots` | Enforcement blind spots ranked by blind-spot score · param: `top_n` |
 | `GET` | `/api/temporal` | Day × hour violation heatmap (IST) + peak hours |
 | `GET` | `/api/breakdown` | Violation-type and vehicle-type distributions |
+| `GET` | `/api/violations` | Deterministic sample of individual violation points for the raw-violations layer · param: `limit` (100–8000) |
+| `GET` | `/api/hotspot-hourly` | Per-hotspot 24-hour intensity profile (normalised 0–1) — powers the Time Machine slider |
+| `GET` | `/api/forecast` | Graph-diffusion next-hour heatmap (now / predicted / actual per hotspot) · params: `hour` (0–23), `steps` (1–6) |
+| `GET` | `/api/flow-graph` | Learned diffusion graph (strongest spill-over edges) + fitted params (alpha/beta/sigma) and diagnostics |
+| `GET` | `/api/displacement/{id}` | Where displaced parking demand re-routes if the hotspot is cleared · params: `steps`, `top` |
 
 ### Key response shapes
 
@@ -223,21 +211,17 @@ Open **http://localhost:3000** — the Next.js proxy forwards all `/api/*` calls
 </details>
 
 <details>
-<summary><code>POST /api/route</code></summary>
+<summary><code>GET /api/displacement/{id}</code></summary>
 
 ```json
 {
-  "stops": [
-    {
-      "order": 1, "lat": 12.97, "lon": 77.59, "station": "Upparpet",
-      "hotspots_covered": 28, "recommended_shift": "Morning (06:00-12:00)",
-      "dist_to_next_km": 2.3, "time_to_next_min": 5.5
-    }
-  ],
-  "total_distance_km": 21.4,
-  "total_time_min": 51.0,
-  "polyline": [[12.97, 77.59], ...],
-  "route_source": "osrm"
+  "source": { "id": 5, "lat": 13.00, "lon": 77.57, "name": "Malleshwaram" },
+  "sigma_m": 1400,
+  "steps": 4,
+  "receivers": [
+    { "id": 41, "lat": 13.02, "lon": 77.55, "name": "Yeshwanthpura", "share": 0.126 },
+    { "id": 88, "lat": 12.99, "lon": 77.55, "name": "Rajajinagar",   "share": 0.124 }
+  ]
 }
 ```
 </details>
@@ -307,6 +291,16 @@ blind_spot_score = max(0, impact_pct − enforcement_pct)
 
 Enforcement is proxied by `(zone_violations / station_mean_violations) × 50 + (cii_density / max_density) × 50`.
 
+### Graph-Diffusion Flow Model (`flow_model.py`)
+
+A kNN graph is built over the 612 hotspots with **learned** distance-decay weights `W_ij = exp(−d_ij / σ)`, where σ (the spatial spill-over range) and the diffusion coefficients are fit by least squares to the real hour-to-hour dynamics:
+
+```
+x(h+1) = α·x(h) + β·(W − I)·x(h)        # graph-Laplacian diffusion
+```
+
+Two honest products are surfaced from it: the **Time Machine** slider (time-of-day climatology — a legitimate short-horizon forecast) and **displacement** (a random walk over the learned graph showing where demand re-routes when a hotspot is enforced). Note: as a pure next-hour *forecaster*, this diffusion barely beats a persistence baseline at hour-of-day resolution — so we present it as climatology + spill-over, not as a skill-claiming predictor.
+
 ---
 
 ## Analysis Scripts
@@ -317,25 +311,25 @@ Enforcement is proxied by `(zone_violations / station_mean_violations) × 50 + (
 | `analysis/validate_clustering.py` | Cluster quality metrics + seasonal R² validation | `python analysis/validate_clustering.py` |
 | `analysis/enforcement_optimizer.py` | OSM road-grounding + standalone optimizer (also imported by precompute.py) | `python analysis/enforcement_optimizer.py` |
 
-All scripts read from the repo-root CSV and write outputs to `output/`.
+All scripts read the raw CSV and write outputs (CSVs + plots) to `output/`.
 
 ---
 
 ## Tech Stack
 
 **Backend**
-- [FastAPI](https://fastapi.tiangolo.com/) — async REST API
-- [scikit-learn](https://scikit-learn.org/) `BallTree` — sub-second spatial coverage index
-- [httpx](https://www.python-httpx.org/) — async OSRM road-snapping requests
-- [pandas](https://pandas.pydata.org/) / [numpy](https://numpy.org/) — data layer
+- [FastAPI](https://fastapi.tiangolo.com/) — REST API
+- [scikit-learn](https://scikit-learn.org/) `BallTree` — sub-second spatial coverage index + kNN flow graph
+- [httpx](https://www.python-httpx.org/) — OSRM road-snapping requests
+- [pandas](https://pandas.pydata.org/) / [numpy](https://numpy.org/) — data + diffusion model
 - [osmnx](https://osmnx.readthedocs.io/) *(optional, offline only)* — OSM road graph for precompute
 
 **Frontend**
-- [Next.js 15](https://nextjs.org/) (App Router) + TypeScript
-- [react-leaflet](https://react-leaflet.js.org/) — interactive maps
-- [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS](https://tailwindcss.com/) — component system
-- [SWR](https://swr.vercel.app/) — data fetching + caching
+- [Vite](https://vite.dev/) + [TanStack Start / Router](https://tanstack.com/) (SSR, file-based routes) + TypeScript
+- [react-leaflet](https://react-leaflet.js.org/) + Leaflet (canvas) — interactive maps, hexbin, flow overlays
+- [shadcn/ui](https://ui.shadcn.com/) (Radix) + [Tailwind CSS](https://tailwindcss.com/) — component system
 - [Recharts](https://recharts.org/) — coverage curve + breakdown charts
+- [lucide-react](https://lucide.dev/) — icons
 
 ---
 

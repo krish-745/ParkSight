@@ -48,6 +48,7 @@ class Store:
         self.index = CoverageIndex(hs["centroid_lat"].values, hs["centroid_lon"].values)
         self.total_impact = float(hs["impact"].sum())
         self._clustered = None  # lazy
+        self._flow = None       # lazy graph-diffusion forecaster
 
     # ---- hotspots ----
     def hotspot_records(self, limit=None, min_cii=0.0, violation=None, station=None):
@@ -91,6 +92,31 @@ class Store:
         if self._clustered is None:
             self._clustered = pd.read_csv(_CLUSTERED, low_memory=False)
         return self._clustered
+
+    @property
+    def flow(self):
+        """Lazy: learned graph-diffusion congestion forecaster (built once)."""
+        if self._flow is None:
+            from flow_model import FlowModel
+            self._flow = FlowModel(self)
+        return self._flow
+
+    def raw_violations(self, limit: int = 2000):
+        """A representative sample of individual (clustered) violation points for the
+        'raw violations' map layer. Deterministic sample so the layer is stable."""
+        c = self.clustered
+        c = c[c.cluster != -1]  # only the clustered points (drop DBSCAN noise)
+        if len(c) > limit:
+            c = c.sample(n=limit, random_state=42)
+        out = []
+        for r in c.itertuples(index=False):
+            out.append({
+                "lat": float(r.latitude),
+                "lon": float(r.longitude),
+                "violation_type": str(r.violation_type),
+                "hour": int(r.hour),
+            })
+        return out
 
     @lru_cache(maxsize=1)
     def stats(self):
