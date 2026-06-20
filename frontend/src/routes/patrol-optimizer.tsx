@@ -40,9 +40,13 @@ function PatrolOptimizer() {
     return () => { on = false; clearTimeout(t); };
   }, [fleet]);
 
+  // Shift length sets *temporal* coverage: a full 12h shift blankets the daily
+  // risk window, a 4h shift leaves gaps. Fleet size sets *spatial* coverage
+  // (how many hotspots you reach). The headline number is the product of both.
+  const shiftFactor = 0.7 + (0.3 * (shift - 4)) / (12 - 4);
   const curveAt = (n: number) =>
-    curve && curve.optimized_pct[n - 1] != null ? curve.optimized_pct[n - 1] / 100 : coverageAt(n);
-  const coverage = opt ? opt.total_coverage_pct / 100 : coverageAt(fleet);
+    (curve && curve.optimized_pct[n - 1] != null ? curve.optimized_pct[n - 1] / 100 : coverageAt(n)) * shiftFactor;
+  const coverage = (opt ? opt.total_coverage_pct / 100 : coverageAt(fleet)) * shiftFactor;
   const baseline5 = curveAt(5);
 
   const plan = useMemo(() => {
