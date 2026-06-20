@@ -32,6 +32,8 @@ function PatrolOptimizer() {
   const curve = useLive<CoverageCurve | null>(() => apiCoverageCurve(50), null);
   const points = useLive<GeoPoint[]>(() => apiGetHotspots(600).then(toGeoPoints), []);
 
+  const validOpt = opt?.num_patrols === fleet ? opt : null;
+
   // re-optimize (debounced) whenever fleet size changes; clear any drawn route
   useEffect(() => {
     let on = true;
@@ -46,12 +48,12 @@ function PatrolOptimizer() {
   const shiftFactor = 0.7 + (0.3 * (shift - 4)) / (12 - 4);
   const curveAt = (n: number) =>
     (curve && curve.optimized_pct[n - 1] != null ? curve.optimized_pct[n - 1] / 100 : coverageAt(n)) * shiftFactor;
-  const coverage = (opt ? opt.total_coverage_pct / 100 : coverageAt(fleet)) * shiftFactor;
+  const coverage = validOpt ? (validOpt.total_coverage_pct / 100) * shiftFactor : curveAt(fleet);
   const baseline5 = curveAt(5);
 
   const plan = useMemo(() => {
-    if (opt?.plan?.length) {
-      return opt.plan.map((p, i) => {
+    if (validOpt?.plan?.length) {
+      return validOpt.plan.map((p, i) => {
         return {
           unit: `PU-${(i + 1).toString().padStart(2, "0")}`,
           h: { name: p.station },
@@ -65,7 +67,7 @@ function PatrolOptimizer() {
       unit: `PU-${(i + 1).toString().padStart(2, "0")}`, h, violations: h.violations,
       km: (3 + (i % 7)).toFixed(1), eta: `${6 + (i % 4)} min`,
     }));
-  }, [opt, fleet]);
+  }, [validOpt, fleet]);
 
   const downloadCsv = () => {
     const head = "unit,station,hotspots_covered,impact_pct,shift";
@@ -110,7 +112,7 @@ function PatrolOptimizer() {
         <Suspense fallback={null}>
           <PatrolMapCanvas
             points={points}
-            opt={opt}
+            opt={validOpt}
             routeData={routeData}
             onReady={() => setIsMapReady(true)}
           />
