@@ -18,7 +18,7 @@ export default defineConfig({
     }
   },
   nitro: {
-    preset: 'vercel'
+    preset: 'cloudflare-pages'
   },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
