@@ -58,5 +58,4 @@ data/blr_graph.graphml.bz2
 backend/data/hotspots_enriched.csv
 
 # ── Misc ───────────────────────────────────────────────────────────────────
-*.json
 *.npy
