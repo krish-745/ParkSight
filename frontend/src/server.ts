@@ -7,13 +7,13 @@ type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
 
+import serverEntryModule from "@tanstack/react-start/server-entry";
+
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 async function getServerEntry(): Promise<ServerEntry> {
   if (!serverEntryPromise) {
-    serverEntryPromise = import("@tanstack/react-start/server-entry").then(
-      (m) => (m.default ?? m) as ServerEntry,
-    );
+    serverEntryPromise = Promise.resolve((serverEntryModule as any).default ?? serverEntryModule);
   }
   return serverEntryPromise;
 }
