@@ -62,3 +62,7 @@ backend/data/hotspots_enriched.csv
 
 # ── Misc ───────────────────────────────────────────────────────────────────
 *.npy
+deckgen/
+frontend_kit/
+analysis/
+/output/
