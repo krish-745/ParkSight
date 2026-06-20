@@ -1,5 +1,15 @@
 # ParkSight — Parking-Congestion Enforcement Intelligence
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E" alt="Vite" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" />
+  <img src="https://img.shields.io/badge/scikit_learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white" alt="scikit-learn" />
+  <img src="https://img.shields.io/badge/Pandas-2C2D72?style=for-the-badge&logo=pandas&logoColor=white" alt="Pandas" />
+</p>
+
 > **AI-driven hotspot analysis and patrol-deployment optimizer for Bengaluru Traffic Police.**
 > Built for Flipkart Gridlock 2.0 Round 2 (PS2 — Poor Visibility on Parking-Induced Congestion).
 
@@ -38,34 +48,37 @@ ParkSight turns 115,000+ anonymized parking violation records into an actionable
 
 ## Architecture
 
-```
-┌─────────────────────────────┐     HTTP (CORS) → VITE_API_URL      ┌──────────────────────────┐
-│  frontend/  (Vite +         │  ─────────────────────────────────► │  backend/  (FastAPI)     │
-│  TanStack Start/Router)     │                                      │                          │
-│                             │  ◄───────────────────────────────── │  Endpoints               │
-│  Routes                     │           JSON responses             │  ├─ /api/stats           │
-│  ├─ /              overview │                                      │  ├─ /api/hotspots        │
-│  ├─ /hotspot-map           │                                      │  ├─ /api/optimize        │
-│  ├─ /patrol-optimizer      │                                      │  ├─ /api/route   (TSP)   │
-│  └─ /analytics             │                                      │  ├─ /api/blindspots      │
-│                             │                                      │  ├─ /api/coverage-curve  │
-│  Key components             │                                      │  ├─ /api/temporal        │
-│  ├─ mini-map.tsx           │                                      │  ├─ /api/breakdown       │
-│  └─ app-shell.tsx          │                                      │  ├─ /api/violations      │
-│                             │                                      │  ├─ /api/hotspot-hourly  │
-│  data/api.ts (typed fetch)  │                                      │  ├─ /api/forecast        │
-│                             │                                      │  ├─ /api/flow-graph      │
-│                             │                                      │  └─ /api/displacement/{} │
-└─────────────────────────────┘                                      └──────────────────────────┘
-                                                                                 │
-                                                                    reads once at startup
-                                                                                 │
-                                                                    ┌────────────▼─────────────┐
-                                                                    │  output/                 │
-                                                                    │  ├─ hotspot_summary.csv  │
-                                                                    │  └─ clustered_violations │
-                                                                    │       .csv               │
-                                                                    └──────────────────────────┘
+```mermaid
+flowchart LR
+    %% Define styles for aesthetic nodes and subgraphs
+    classDef default fill:#ffffff,stroke:#e2e8f0,stroke-width:1px,color:#0f172a,rx:8px,ry:8px
+    classDef subgraphStyle fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,stroke-dasharray: 5 5,color:#0f172a
+    classDef highlight fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a,rx:8px,ry:8px
+
+    subgraph Frontend ["frontend/ (Vite + TanStack)"]
+        direction TB
+        Routes["Routes<br/>├─ / (overview)<br/>├─ /hotspot-map<br/>├─ /patrol-optimizer<br/>└─ /analytics"]:::default
+        Components["Components<br/>├─ mini-map.tsx<br/>└─ app-shell.tsx"]:::default
+        API_Fetch["data/api.ts (typed fetch)"]:::default
+        
+        Routes ~~~ Components ~~~ API_Fetch
+    end
+
+    subgraph Backend ["backend/ (FastAPI)"]
+        direction TB
+        Endpoints["Endpoints<br/>├─ /api/stats<br/>├─ /api/hotspots<br/>├─ /api/optimize<br/>├─ /api/route (TSP)<br/>├─ /api/blindspots<br/>├─ /api/coverage-curve<br/>├─ /api/temporal<br/>├─ /api/breakdown<br/>├─ /api/violations<br/>├─ /api/hotspot-hourly<br/>├─ /api/forecast<br/>├─ /api/flow-graph<br/>└─ /api/displacement/{}"]:::highlight
+    end
+
+    subgraph Data ["output/"]
+        direction TB
+        CSV["├─ hotspot_summary.csv<br/>└─ clustered_violations.csv"]:::default
+    end
+
+    Frontend -- "HTTP (CORS) → VITE_API_URL" ---> Backend
+    Backend -. "JSON responses" .-> Frontend
+    Backend -- "reads once at startup" ---> Data
+
+    class Frontend,Backend,Data subgraphStyle
 ```
 
 The frontend calls the backend directly over CORS (no dev proxy); the base URL is `VITE_API_URL`, defaulting to `http://localhost:8000`.
