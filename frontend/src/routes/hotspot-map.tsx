@@ -93,6 +93,19 @@ function HotspotMapPage() {
 
   const toggleLayer = (id: string) => setLayers((ls) => ls.map((l) => (l.id === id ? { ...l, on: !l.on } : l)));
 
+  const handleSearch = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const query = window.prompt("Enter cluster ID (e.g. H-102) or station name:");
+    if (!query) return;
+    const match = points.find(p => p.id.toLowerCase() === query.toLowerCase() || p.name.toLowerCase().includes(query.toLowerCase()));
+    if (match) {
+      setSelected(match);
+      setDrawerOpen(true);
+    } else {
+      window.alert("No cluster found matching: " + query);
+    }
+  };
+
   // clear any displacement overlay when the selected hotspot changes
   useEffect(() => { setDisplacement(null); }, [selected]);
 
@@ -149,7 +162,7 @@ function HotspotMapPage() {
             <div className="font-medium text-[16px] text-[#e6eaf2] tracking-tight">Bengaluru · Urban Core</div>
           </div>
           <div className="flex gap-2">
-            <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" onClick={(e) => e.stopPropagation()}>
+            <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" onClick={handleSearch}>
               <Search className="size-[18px]" />
             </button>
             <button className="text-[#8b949e] hover:text-[#e6eaf2] transition-colors p-1" aria-label="Toggle Layers">

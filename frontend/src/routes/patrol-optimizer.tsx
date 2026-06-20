@@ -29,7 +29,7 @@ function PatrolOptimizer() {
   const [planOpen, setPlanOpen] = useState(true);
   const [opt, setOpt] = useState<OptimizeResult | null>(null);
   const [routeData, setRouteData] = useState<RouteResp | null>(null);
-  const curve = useLive<CoverageCurve | null>(() => apiCoverageCurve(60), null);
+  const curve = useLive<CoverageCurve | null>(() => apiCoverageCurve(50), null);
   const points = useLive<GeoPoint[]>(() => apiGetHotspots(600).then(toGeoPoints), []);
 
   // re-optimize (debounced) whenever fleet size changes; clear any drawn route
@@ -81,12 +81,12 @@ function PatrolOptimizer() {
 
   // Coverage curve mini-svg
   const W = 260, H = 60;
-  const svgPoints = Array.from({ length: 61 }, (_, i) => {
-    const x = (i / 60) * W;
+  const svgPoints = Array.from({ length: 51 }, (_, i) => {
+    const x = (i / 50) * W;
     const y = H - curveAt(i) * H;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  const cursorX = (fleet / 60) * W;
+  const cursorX = (fleet / 50) * W;
   const cursorY = H - coverage * H;
 
   const [isMapReady, setIsMapReady] = useState(false);
@@ -124,7 +124,7 @@ function PatrolOptimizer() {
         </div>
 
         <div className="mt-5">
-          <SliderRow label="Fleet size" value={fleet} setValue={setFleet} min={1} max={60} unit="units" />
+          <SliderRow label="Fleet size" value={fleet} setValue={setFleet} min={1} max={50} unit="units" />
           <div className="h-4" />
           <SliderRow label="Shift length" value={shift} setValue={setShift} min={4} max={12} unit="hours" />
         </div>
@@ -141,7 +141,9 @@ function PatrolOptimizer() {
             </div>
             <div className="text-right">
               <div className="text-[10px] uppercase tracking-[0.2em] text-[#8b949e] font-semibold">vs 5-unit baseline</div>
-              <div className="mt-1.5 text-[18px] font-medium tabular-nums text-active">+{((coverage - baseline5) * 100).toFixed(0)}%</div>
+              <div className="mt-1.5 text-[18px] font-medium tabular-nums text-active">
+                {((coverage - baseline5) * 100) > 0 ? '+' : ''}{((coverage - baseline5) * 100).toFixed(0)}%
+              </div>
             </div>
           </div>
 
@@ -153,14 +155,16 @@ function PatrolOptimizer() {
             <circle cx={cursorX} cy={cursorY} r="3" fill="var(--color-active)" />
           </svg>
           <div className="flex justify-between text-[10px] text-[#8b949e] font-medium tabular-nums mt-1">
-            <span>0 units</span><span>30</span><span>60</span>
+            <span>0 units</span><span>25</span><span>50</span>
           </div>
         </div>
 
         <div className="mt-6 flex gap-3">
-          <button onClick={computeRoute} disabled={isComputing} className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-[#38b2ac] hover:bg-[#319795] text-[#0d1117] font-semibold text-[13px] py-2 transition-colors shadow-sm disabled:opacity-50">
+          <button onClick={computeRoute} disabled={isComputing || fleet > 50} className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-[#38b2ac] hover:bg-[#319795] text-[#0d1117] font-semibold text-[13px] py-2 transition-colors shadow-sm disabled:opacity-50">
             {isComputing ? (
               <span className="animate-pulse">Computing...</span>
+            ) : fleet > 50 ? (
+              <><Play className="size-3.5" /> Max 50 units for routing</>
             ) : (
               <><Play className="size-3.5" /> {routeData ? `Route · ${routeData.total_distance_km.toFixed(0)} km` : "Compute route"}</>
             )}
@@ -195,8 +199,9 @@ function PatrolOptimizer() {
             </button>
           </div>
 
-          <div className="px-5 py-4 border-b border-[#1e2532] grid grid-cols-3 gap-3">
+          <div className="px-5 py-4 border-b border-[#1e2532] grid grid-cols-4 gap-3">
             <Mini label="Total km" value={plan.reduce((a, p) => a + parseFloat(p.km), 0).toFixed(0)} />
+            <Mini label="Unit-Hrs" value={(fleet * shift).toString()} />
             <Mini label="Avg ETA" value="7 min" />
             <Mini label="Marginal +1" value={`+${Math.max(0, (curveAt(fleet + 1) - coverage) * 100).toFixed(2)}%`} tone="info" />
           </div>
