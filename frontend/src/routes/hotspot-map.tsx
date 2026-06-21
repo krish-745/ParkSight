@@ -290,7 +290,6 @@ function HotspotMapPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-[13px]"><span className="text-[#8b949e]">Violation</span><span className="text-[#e6eaf2] font-medium">{selected.dominant_violation}</span></div>
                   <div className="flex justify-between text-[13px]"><span className="text-[#8b949e]">Peak Shift</span><span className="text-[#e6eaf2] font-medium">{selected.shift}</span></div>
-                  <div className="flex justify-between text-[13px]"><span className="text-[#8b949e]">Road</span><span className="text-[#e6eaf2] font-medium">{selected.road_class}</span></div>
                 </div>
               </div>
 
