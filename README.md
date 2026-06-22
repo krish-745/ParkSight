@@ -96,6 +96,11 @@ The frontend calls the backend directly over CORS (no dev proxy); the base URL i
 
 ```
 ParkSight/
+├── analysis/                 # Offline data science scripts (hotspots, optimization)
+│   ├── enforcement_optimizer.py
+│   ├── parking_hotspot_analysis.py
+│   └── validate_clustering.py
+│
 ├── backend/                  # FastAPI API server
 │   ├── main.py               # All endpoints
 │   ├── core.py               # Coverage optimizer + TSP solver (pure numpy)
@@ -302,7 +307,17 @@ Two honest products are surfaced from it: the **Time Machine** slider (time-of-d
 
 ---
 
+## Analysis Scripts
 
+The `analysis/` folder contains the offline data science pipeline used to extract intelligence from raw violation records:
+
+- **`parking_hotspot_analysis.py`**: Runs DBSCAN clustering on ~298K records to find hotspots and computes the Congestion Impact Index (CII).
+- **`validate_clustering.py`**: Evaluates the clustering quality using Silhouette, Davies-Bouldin, and Calinski-Harabasz metrics.
+- **`enforcement_optimizer.py`**: Solves a greedy max-coverage problem to find the optimal deployment of limited patrol units, generating the coverage curve.
+
+For more details, see the [Analysis README](./analysis/README.md).
+
+---
 
 ## Tech Stack
 
