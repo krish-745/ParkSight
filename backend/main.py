@@ -56,8 +56,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/", include_in_schema=False)
 def home():
-    """Serve the dashboard UI."""
-    return FileResponse(FRONTEND)
+    """API Root."""
+    return {"message": "ParkSight API is running!"}
 
 
 @app.get("/health")
