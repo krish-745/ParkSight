@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { Hotspot } from "./mock";
 
 // @ts-ignore
-export const API_BASE = "https://flipkartround2-production.up.railway.app";
+export const API_BASE = "https://parksight-e6jq.onrender.com";
 
 // ---- raw API types ----
 export interface Stats {
