@@ -4,8 +4,9 @@
 import { useEffect, useState } from "react";
 import type { Hotspot } from "./mock";
 
-// @ts-ignore
-export const API_BASE = "https://parksight-e6jq.onrender.com";
+export const API_BASE: string =
+  (import.meta as any).env?.VITE_API_URL ||
+  ((import.meta as any).env?.DEV ? "http://localhost:8000" : "https://parksight-e6jq.onrender.com");
 
 // ---- raw API types ----
 export interface Stats {
@@ -82,6 +83,28 @@ export const apiTemporal = () => get<Temporal>("/api/temporal");
 export const apiBreakdown = () => get<Breakdown>("/api/breakdown");
 export const apiRoute = (num_patrols: number, cover_radius_m = 1000) => post<RouteResp>("/api/route", { num_patrols, cover_radius_m });
 
+// ── Multi-Vehicle Route Optimizer ──
+export interface CarStop {
+  order: number; lat: number; lon: number;
+  station: string; dominant_violation: string;
+  hotspots_in_radius: number;
+  dist_to_next_km: number; time_to_next_min: number;
+}
+export interface CarRoute {
+  car_id: number; color: string;
+  stops: CarStop[];
+  polyline: number[][];
+  total_distance_km: number; total_time_min: number;
+  route_source: string;
+}
+export interface MultiRouteResp {
+  num_cars: number; stops_per_car: number; total_hotspots: number;
+  shift_window: string; shift_hours: number;
+  cars: CarRoute[];
+}
+export const apiMultiRoute = (num_cars: number, shift_hours: number) =>
+  post<MultiRouteResp>("/api/multi-route", { num_cars, shift_hours, stops_per_car: 3, avg_speed_kmh: 25 });
+
 // ---- geo → SVG (0..100) projection over the Bengaluru bbox ----
 const BBOX = { s: 12.8, n: 13.3, w: 77.3, e: 77.8 };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -125,7 +148,7 @@ export function useLive<T>(fetcher: () => Promise<T>, fallback: T): T {
   const [data, setData] = useState<T>(fallback);
   useEffect(() => {
     let on = true;
-    fetcher().then((d) => { if (on) setData(d); }).catch(() => {});
+    fetcher().then((d) => { if (on) setData(d); }).catch(() => { });
     return () => { on = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

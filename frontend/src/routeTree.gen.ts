@@ -9,19 +9,14 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as PatrolOptimizerRouteImport } from './routes/patrol-optimizer'
-import { Route as HotspotMapRouteImport } from './routes/hotspot-map'
-import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
+import { Route as HotspotMapRouteImport } from './routes/hotspot-map'
+import { Route as PatrolOptimizerRouteImport } from './routes/patrol-optimizer'
 
-const PatrolOptimizerRoute = PatrolOptimizerRouteImport.update({
-  id: '/patrol-optimizer',
-  path: '/patrol-optimizer',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HotspotMapRoute = HotspotMapRouteImport.update({
-  id: '/hotspot-map',
-  path: '/hotspot-map',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AnalyticsRoute = AnalyticsRouteImport.update({
@@ -29,9 +24,14 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
   path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const HotspotMapRoute = HotspotMapRouteImport.update({
+  id: '/hotspot-map',
+  path: '/hotspot-map',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatrolOptimizerRoute = PatrolOptimizerRouteImport.update({
+  id: '/patrol-optimizer',
+  path: '/patrol-optimizer',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -71,18 +71,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/patrol-optimizer': {
-      id: '/patrol-optimizer'
-      path: '/patrol-optimizer'
-      fullPath: '/patrol-optimizer'
-      preLoaderRoute: typeof PatrolOptimizerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hotspot-map': {
-      id: '/hotspot-map'
-      path: '/hotspot-map'
-      fullPath: '/hotspot-map'
-      preLoaderRoute: typeof HotspotMapRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/analytics': {
@@ -92,11 +85,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/hotspot-map': {
+      id: '/hotspot-map'
+      path: '/hotspot-map'
+      fullPath: '/hotspot-map'
+      preLoaderRoute: typeof HotspotMapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patrol-optimizer': {
+      id: '/patrol-optimizer'
+      path: '/patrol-optimizer'
+      fullPath: '/patrol-optimizer'
+      preLoaderRoute: typeof PatrolOptimizerRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

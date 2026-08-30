@@ -127,3 +127,43 @@ class BlindSpotsResponse(BaseModel):
     high_count: int
     moderate_count: int
     zones: List[BlindSpot]
+
+
+# ── Multi-Vehicle Route Optimizer ──
+
+class MultiRouteRequest(BaseModel):
+    num_cars: int = Field(5, ge=1, le=50, description="Number of patrol cars")
+    shift_hours: int = Field(8, ge=4, le=12, description="Shift length in hours; filters hotspots by peak_hour in the current window")
+    stops_per_car: int = Field(3, ge=2, le=8, description="Stops per car (hotspots to visit)")
+    avg_speed_kmh: float = Field(25.0, ge=5, le=80, description="Average driving speed (km/h)")
+    current_hour: Optional[int] = Field(None, ge=0, le=23, description="Override current IST hour (default: server time)")
+
+
+class CarStop(BaseModel):
+    order: int                     # 1-indexed within this car's route
+    lat: float
+    lon: float
+    station: str
+    dominant_violation: str
+    hotspots_in_radius: int        # hotspots within 1km of this stop
+    dist_to_next_km: float
+    time_to_next_min: float
+
+
+class CarRoute(BaseModel):
+    car_id: int
+    color: str                     # HSL color string e.g. "hsl(72, 70%, 55%)"
+    stops: List[CarStop]
+    polyline: List[List[float]]    # [[lat, lon], ...] open route (no return to depot)
+    total_distance_km: float
+    total_time_min: float
+    route_source: str              # "osrm" | "haversine_fallback"
+
+
+class MultiRouteResponse(BaseModel):
+    num_cars: int
+    stops_per_car: int
+    total_hotspots: int
+    shift_window: str              # e.g. "Evening (17:00-22:00)"
+    shift_hours: int
+    cars: List[CarRoute]

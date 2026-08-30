@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { hotspots } from "@/data/mock";
-import { useLive, apiOptimize, apiCoverageCurve, apiRoute, apiGetHotspots, toGeoPoints, type OptimizeResult, type CoverageCurve, type RouteResp, type GeoPoint } from "@/data/api";
+import { useLive, apiOptimize, apiCoverageCurve, apiMultiRoute, apiGetHotspots, toGeoPoints, type OptimizeResult, type CoverageCurve, type MultiRouteResp, type GeoPoint } from "@/data/api";
 import { Download, Play, Maximize2, Minimize2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+
 
 // Leaflet touches `window` at import time → load the map client-only via dynamic import.
 const PatrolMapCanvas = lazy(() => import("@/components/patrol-map-canvas"));
@@ -28,16 +29,33 @@ function PatrolOptimizer() {
   const [shift, setShift] = useState(8);
   const [planOpen, setPlanOpen] = useState(true);
   const [opt, setOpt] = useState<OptimizeResult | null>(null);
-  const [routeData, setRouteData] = useState<RouteResp | null>(null);
+  const [multiRouteData, setMultiRouteData] = useState<MultiRouteResp | null>(null);
+  const [selectedCarIds, setSelectedCarIds] = useState<number[]>([]);
   const curve = useLive<CoverageCurve | null>(() => apiCoverageCurve(50), null);
   const points = useLive<GeoPoint[]>(() => apiGetHotspots(600).then(toGeoPoints), []);
+
+  useEffect(() => {
+    if (multiRouteData?.cars?.length) {
+      setSelectedCarIds([1]); // default to showing the first vehicle's path
+    } else {
+      setSelectedCarIds([]);
+    }
+  }, [multiRouteData]);
+
+  const toggleCarSelection = (carId: number) => {
+    setSelectedCarIds(prev => 
+      prev.includes(carId) 
+        ? prev.filter(id => id !== carId) 
+        : [...prev, carId]
+    );
+  };
 
   const validOpt = opt?.num_patrols === fleet ? opt : null;
 
   // re-optimize (debounced) whenever fleet size changes; clear any drawn route
   useEffect(() => {
     let on = true;
-    setRouteData(null);
+    setMultiRouteData(null);
     const t = setTimeout(() => { apiOptimize(fleet, 1000).then((r) => on && setOpt(r)).catch(() => {}); }, 400);
     return () => { on = false; clearTimeout(t); };
   }, [fleet]);
@@ -52,22 +70,40 @@ function PatrolOptimizer() {
   const baseline5 = curveAt(5);
 
   const plan = useMemo(() => {
+    // Use real multi-route data if available
+    if (multiRouteData?.cars?.length) {
+      return multiRouteData.cars.map((car) => {
+        const stopList = car.stops.map((s) => s.station).join(" → ");
+        return {
+          carId: car.car_id,
+          unit: `PU-${String(car.car_id).padStart(2, "0")}`,
+          h: { name: stopList },
+          violations: car.stops.reduce((a, s) => a + s.hotspots_in_radius, 0),
+          km: car.total_distance_km.toFixed(1),
+          eta: `${Math.round(car.total_time_min)} min`,
+          color: car.color,
+        };
+      });
+    }
     if (validOpt?.plan?.length) {
       return validOpt.plan.map((p, i) => {
         return {
+          carId: undefined,
           unit: `PU-${(i + 1).toString().padStart(2, "0")}`,
           h: { name: p.station },
           violations: p.hotspots_covered,
           km: p.impact_covered_pct.toFixed(1),
           eta: p.recommended_shift.split(" ")[0] ?? `${6 + (i % 4)} min`,
+          color: undefined,
         };
       });
     }
     return [...hotspots].sort((a, b) => b.violations - a.violations).slice(0, fleet).map((h, i) => ({
+      carId: undefined,
       unit: `PU-${(i + 1).toString().padStart(2, "0")}`, h, violations: h.violations,
-      km: (3 + (i % 7)).toFixed(1), eta: `${6 + (i % 4)} min`,
+      km: (3 + (i % 7)).toFixed(1), eta: `${6 + (i % 4)} min`, color: undefined,
     }));
-  }, [validOpt, fleet]);
+  }, [multiRouteData, validOpt, fleet]);
 
   const downloadCsv = () => {
     const head = "unit,station,hotspots_covered,impact_pct,shift";
@@ -79,8 +115,8 @@ function PatrolOptimizer() {
   const [isComputing, setIsComputing] = useState(false);
   const computeRoute = () => { 
     setIsComputing(true);
-    apiRoute(fleet, 1000).then(res => {
-      setRouteData(res);
+    apiMultiRoute(fleet, shift).then(res => {
+      setMultiRouteData(res);
       setIsComputing(false);
     }).catch(() => { setIsComputing(false); }); 
   };
@@ -113,7 +149,9 @@ function PatrolOptimizer() {
           <PatrolMapCanvas
             points={points}
             opt={opt}
-            routeData={routeData}
+            routeData={null}
+            multiRouteData={multiRouteData}
+            selectedCarIds={selectedCarIds}
             onReady={() => setIsMapReady(true)}
           />
         </Suspense>
@@ -167,12 +205,10 @@ function PatrolOptimizer() {
 
         <div className="mt-6 flex gap-3">
           <button onClick={computeRoute} disabled={isComputing || fleet > 50} className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-[#38b2ac] hover:bg-[#319795] text-[#0d1117] font-semibold text-[13px] py-2 transition-colors shadow-sm disabled:opacity-50">
-            {isComputing ? (
+          {isComputing ? (
               <span className="animate-pulse">Computing...</span>
-            ) : fleet > 50 ? (
-              <><Play className="size-3.5" /> Max 50 units for routing</>
             ) : (
-              <><Play className="size-3.5" /> {routeData ? `Route · ${routeData.total_distance_km.toFixed(0)} km` : "Compute route"}</>
+              <><Play className="size-3.5" /> {multiRouteData ? `${multiRouteData.num_cars} routes · ${multiRouteData.cars.reduce((a,c)=>a+c.total_distance_km,0).toFixed(0)} km total` : "Compute routes"}</>
             )}
           </button>
           <button onClick={downloadCsv} className="flex items-center justify-center gap-1.5 rounded-md border border-[#30363d] bg-[#161b22] px-4 text-[13px] text-[#e6eaf2] font-medium hover:bg-[#21262d] transition-colors shadow-sm">
@@ -216,21 +252,68 @@ function PatrolOptimizer() {
             <table className="w-full text-[13px]">
               <thead className="text-[#8b949e] text-[10px] uppercase tracking-[0.2em] font-semibold sticky top-0 bg-[#0f141f]/95 backdrop-blur-sm shadow-sm z-10">
                 <tr>
-                  <th className="text-left px-5 py-3 font-semibold">Unit</th>
+                  <th className="text-left px-5 py-3 font-semibold flex items-center gap-2">
+                    {multiRouteData && (
+                      <input
+                        type="checkbox"
+                        checked={selectedCarIds.length === multiRouteData.cars.length}
+                        ref={(el) => {
+                          if (el) {
+                            el.indeterminate = selectedCarIds.length > 0 && selectedCarIds.length < multiRouteData.cars.length;
+                          }
+                        }}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedCarIds(multiRouteData.cars.map(c => c.car_id));
+                          } else {
+                            setSelectedCarIds([]);
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded border-[#30363d] bg-[#161b22] text-[#38b2ac] focus:ring-0 cursor-pointer"
+                      />
+                    )}
+                    Unit
+                  </th>
                   <th className="text-left px-2 py-3 font-semibold">Area</th>
                   <th className="text-right px-2 py-3 font-semibold">Viol.</th>
                   <th className="text-right px-5 py-3 font-semibold">ETA</th>
                 </tr>
               </thead>
               <tbody className="text-[#e6eaf2] font-medium">
-                {plan.map((p) => (
-                  <tr key={p.unit} className="border-b border-[#1e2532]/50 hover:bg-[#161b22] transition-colors">
-                    <td className="px-5 py-3 tabular-nums text-[12px]">{p.unit}</td>
-                    <td className="px-2 py-3 truncate max-w-[140px] text-[13px]">{p.h.name}</td>
-                    <td className="px-2 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.violations}</td>
-                    <td className="px-5 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.eta}</td>
-                  </tr>
-                ))}
+                {plan.map((p) => {
+                  const isSelected = p.carId ? selectedCarIds.includes(p.carId) : false;
+                  return (
+                    <tr 
+                      key={p.unit} 
+                      onClick={() => p.carId && toggleCarSelection(p.carId)}
+                      className={cn(
+                        "border-b border-[#1e2532]/50 hover:bg-[#161b22] transition-colors cursor-pointer",
+                        isSelected && "bg-[#161b22]/50"
+                      )}
+                    >
+                      <td className="px-5 py-3 tabular-nums text-[12px] flex items-center gap-2">
+                        {p.carId && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleCarSelection(p.carId!);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="rounded border-[#30363d] bg-[#161b22] text-[#38b2ac] focus:ring-0 cursor-pointer"
+                          />
+                        )}
+                        {p.color && <span className="inline-block size-2 rounded-full flex-shrink-0" style={{ background: p.color }} />}
+                        {p.unit}
+                      </td>
+                      <td className="px-2 py-3 truncate max-w-[140px] text-[13px]">{p.h.name}</td>
+                      <td className="px-2 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.violations}</td>
+                      <td className="px-5 py-3 text-right tabular-nums text-[#8b949e] text-[13px]">{p.eta}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

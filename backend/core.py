@@ -171,3 +171,102 @@ def solve_tsp(lats, lons):
         if cost < best_cost:
             best_tour, best_cost = tour, cost
     return best_tour, dist
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Vehicle Route Optimizer — cluster hotspots, TSP per car
+# ─────────────────────────────────────────────────────────────────────────────
+
+def hsl_color(index: int, total: int) -> str:
+    """Generate a perceptually distinct HSL color for car `index` out of `total`."""
+    hue = int((index / max(total, 1)) * 360)
+    return f"hsl({hue}, 70%, 55%)"
+
+
+def cluster_and_route(lats, lons, impacts, hotspot_indices, num_cars: int, stops_per_car: int):
+    """Multi-vehicle routing:
+    1. Pick top num_cars*stops_per_car hotspots by impact.
+    2. Find K geographic centroids via K-Means, then do a BALANCED assignment
+       so every car gets exactly stops_per_car stops (no uneven splits).
+    3. Solve open TSP within each balanced cluster.
+    Returns list of dicts, one per car, with keys:
+        car_id, color, global_indices, lats, lons, tour, dist_matrix
+    """
+    from sklearn.cluster import KMeans
+
+    lats = np.asarray(lats, dtype=float)
+    lons = np.asarray(lons, dtype=float)
+    impacts = np.asarray(impacts, dtype=float)
+    hotspot_indices = np.asarray(hotspot_indices, dtype=int)
+
+    # pick top N by impact
+    n_target = num_cars * stops_per_car
+    sorted_pos = np.argsort(impacts)[::-1][:n_target]
+
+    top_lats = lats[sorted_pos]
+    top_lons = lons[sorted_pos]
+    top_global = hotspot_indices[sorted_pos]
+
+    n_points = len(top_lats)
+    actual_k = min(num_cars, n_points)
+    actual_spc = n_points // actual_k   # stops per car after adjustment
+
+    # ── Step 1: get K centroids from K-Means ─────────────────────────────────
+    coords = np.column_stack([top_lats, top_lons])
+    km = KMeans(n_clusters=actual_k, random_state=42, n_init=10)
+    km.fit(coords)
+    centroids = km.cluster_centers_   # shape (K, 2)
+
+    # ── Step 2: balanced assignment ───────────────────────────────────────────
+    # For each hotspot, compute distance to all centroids.
+    # Greedily assign each hotspot (sorted by min-centroid-distance) to its
+    # nearest centroid that still has capacity = actual_spc.
+    dist_to_centroids = np.sqrt(
+        ((coords[:, 0:1] - centroids[:, 0]) ** 2 +
+         (coords[:, 1:2] - centroids[:, 1]) ** 2)
+    )  # shape (n_points, K)
+
+    labels = np.full(n_points, -1, dtype=int)
+    capacity = np.full(actual_k, actual_spc, dtype=int)
+
+    # process points in order of their distance to closest centroid (easiest first)
+    min_dists = dist_to_centroids.min(axis=1)
+    assignment_order = np.argsort(min_dists)
+
+    for idx in assignment_order:
+        # try centroids sorted by distance for this point
+        centroid_order = np.argsort(dist_to_centroids[idx])
+        for c in centroid_order:
+            if capacity[c] > 0:
+                labels[idx] = c
+                capacity[c] -= 1
+                break
+
+    # ── Step 3: TSP within each balanced cluster ──────────────────────────────
+    cars = []
+    for car_idx in range(actual_k):
+        mask = labels == car_idx
+        g_indices = top_global[mask]
+        c_lats = top_lats[mask]
+        c_lons = top_lons[mask]
+
+        if len(g_indices) == 0:
+            continue
+
+        if len(g_indices) == 1:
+            tour = [0]
+            dist = np.array([[0.0]])
+        else:
+            tour, dist = solve_tsp(c_lats.tolist(), c_lons.tolist())
+
+        cars.append({
+            "car_id": car_idx + 1,
+            "color": hsl_color(car_idx, actual_k),
+            "global_indices": g_indices,
+            "lats": c_lats,
+            "lons": c_lons,
+            "tour": tour,
+            "dist_matrix": dist,
+        })
+
+    return cars

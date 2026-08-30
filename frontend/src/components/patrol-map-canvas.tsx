@@ -3,15 +3,17 @@
 import { useEffect, useRef } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { OptimizeResult, RouteResp, GeoPoint } from "@/data/api";
+import type { OptimizeResult, RouteResp, GeoPoint, MultiRouteResp } from "@/data/api";
 import "leaflet/dist/leaflet.css";
 
 function ImperativeOptimizerMap({
-  points, opt, routeData,
+  points, opt, routeData, multiRouteData, selectedCarIds,
 }: {
   points: GeoPoint[];
   opt: OptimizeResult | null;
   routeData: RouteResp | null;
+  multiRouteData: MultiRouteResp | null;
+  selectedCarIds?: number[];
 }) {
   const map = useMap();
   const backgroundLayer = useRef<L.LayerGroup | null>(null);
@@ -44,29 +46,74 @@ function ImperativeOptimizerMap({
     return () => { if (backgroundLayer.current) map.removeLayer(backgroundLayer.current); };
   }, [points, map]);
 
-  // Route Polyline
+  // Route Polyline(s): multi-route takes priority over legacy single route
   useEffect(() => {
     if (routeLayer.current) map.removeLayer(routeLayer.current);
-    if (!routeData) return;
-
     const group = L.layerGroup();
 
-    const polyline = L.polyline(routeData.polyline as [number, number][], {
-      color: "var(--color-active, #58a6ff)",
-      weight: 3,
-      opacity: 0.85,
-      dashArray: "8, 6",
-      interactive: false,
-    }).addTo(group);
+    if (multiRouteData?.cars?.length) {
+      const allBounds: [number, number][] = [];
+      
+      // Filter cars to show based on selectedCarIds (if provided)
+      const visibleCars = selectedCarIds
+        ? multiRouteData.cars.filter(car => selectedCarIds.includes(car.car_id))
+        : multiRouteData.cars;
 
-    map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+      visibleCars.forEach((car) => {
+        const color = car.color;
+
+        // Draw route polyline
+        if (car.polyline.length > 1) {
+          L.polyline(car.polyline as [number, number][], {
+            color,
+            weight: 3,
+            opacity: 0.85,
+            dashArray: "8, 6",
+            interactive: false,
+          }).addTo(group);
+        }
+
+        // Numbered stop markers
+        car.stops.forEach((stop) => {
+          allBounds.push([stop.lat, stop.lon]);
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="
+              width:28px;height:28px;border-radius:50%;
+              background:${color};border:2px solid #fff;
+              display:grid;place-items:center;
+              font-size:11px;font-weight:700;color:#000;
+              box-shadow:0 0 10px rgba(0,0,0,0.4);
+            ">${stop.order}</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+          });
+          L.marker([stop.lat, stop.lon], { icon, interactive: false })
+            .bindTooltip(`PU-${String(car.car_id).padStart(2,"0")} · Stop ${stop.order}<br/>${stop.station}`, { sticky: true })
+            .addTo(group);
+        });
+      });
+
+      if (allBounds.length) map.fitBounds(allBounds, { padding: [50, 50] });
+
+    } else if (routeData) {
+      // Legacy single-route fallback
+      const polyline = L.polyline(routeData.polyline as [number, number][], {
+        color: "var(--color-active, #58a6ff)",
+        weight: 3,
+        opacity: 0.85,
+        dashArray: "8, 6",
+        interactive: false,
+      }).addTo(group);
+      map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+    }
 
     group.addTo(map);
     routeLayer.current = group;
     return () => { if (routeLayer.current) map.removeLayer(routeLayer.current); };
-  }, [routeData, map]);
+  }, [routeData, multiRouteData, selectedCarIds, map]);
 
-  // Patrol Markers
+  // Patrol Markers (from optimize result — shown before route is computed)
   useEffect(() => {
     if (patrolLayer.current) map.removeLayer(patrolLayer.current);
     if (!opt?.plan?.length) return;
@@ -112,11 +159,13 @@ function ImperativeOptimizerMap({
 }
 
 export default function PatrolMapCanvas({
-  points, opt, routeData, onReady,
+  points, opt, routeData, multiRouteData, selectedCarIds, onReady,
 }: {
   points: GeoPoint[];
   opt: OptimizeResult | null;
   routeData: RouteResp | null;
+  multiRouteData: MultiRouteResp | null;
+  selectedCarIds?: number[];
   onReady: () => void;
 }) {
   return (
@@ -129,7 +178,9 @@ export default function PatrolMapCanvas({
       whenReady={onReady}
     >
       <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} />
-      <ImperativeOptimizerMap points={points} opt={opt} routeData={routeData} />
+      <ImperativeOptimizerMap points={points} opt={opt} routeData={routeData} multiRouteData={multiRouteData} selectedCarIds={selectedCarIds} />
     </MapContainer>
   );
 }
+
+

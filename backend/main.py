@@ -17,7 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import core
 from data import get_store
 from schemas import (Stats, Hotspot, OptimizeRequest, OptimizeResponse, CoverageCurve,
-                     RouteRequest, RouteResponse, BlindSpotsResponse)
+                     RouteRequest, RouteResponse, BlindSpotsResponse,
+                     MultiRouteRequest, MultiRouteResponse)
 
 logger = logging.getLogger("parksight")
 
@@ -351,3 +352,126 @@ def displacement(hotspot_id: int, steps: int = Query(4, ge=1, le=10), top: int =
     Random walk over the learned spill-over graph."""
     return get_store().flow.displacement(source_id=hotspot_id, steps=steps, top=top)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Vehicle Route Optimizer
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/multi-route", response_model=MultiRouteResponse)
+def multi_route(req: MultiRouteRequest):
+    """Cluster the top hotspots (filtered by shift time window) into per-car mini-routes.
+
+    - shift_hours filters hotspots to those whose peak_hour falls in the window
+      [current_hour, current_hour + shift_hours).  Falls back to all hotspots if
+      the window yields fewer candidates than needed.
+    - Each car gets a geographically tight cluster of stops_per_car hotspots.
+    - TSP is solved within each cluster → optimal open route (no return to depot).
+    - Routes are road-snapped via OSRM if available, haversine fallback otherwise.
+    """
+    import datetime
+
+    s = get_store()
+    hs = s.hs
+    nbrs = s.index.neighbors(1000)   # 1km radius for hotspots_in_radius count
+
+    # ── Determine shift window ──────────────────────────────────────────────
+    if req.current_hour is not None:
+        cur_h = req.current_hour
+    else:
+        ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        cur_h = datetime.datetime.now(ist).hour
+
+    end_h = (cur_h + req.shift_hours) % 24
+
+    if cur_h <= end_h:
+        mask = (hs["peak_hour"] >= cur_h) & (hs["peak_hour"] < end_h)
+    else:  # wraps midnight
+        mask = (hs["peak_hour"] >= cur_h) | (hs["peak_hour"] < end_h)
+
+    filtered = hs[mask].copy()
+
+    # fall back to full hotspot set if window is too narrow
+    n_needed = req.num_cars * req.stops_per_car
+    if len(filtered) < n_needed:
+        filtered = hs.copy()
+
+    # ── Cluster + TSP ───────────────────────────────────────────────────────
+    lats       = filtered["centroid_lat"].values
+    lons       = filtered["centroid_lon"].values
+    impacts    = filtered["impact"].values
+    h_indices  = filtered.index.values          # positional indices into s.hs
+
+    cars_raw = core.cluster_and_route(
+        lats, lons, impacts, h_indices,
+        num_cars=req.num_cars, stops_per_car=req.stops_per_car,
+    )
+
+    if not cars_raw:
+        raise HTTPException(400, "Not enough hotspots to build routes")
+
+    # ── Build per-car response ──────────────────────────────────────────────
+    cars_out = []
+    for car in cars_raw:
+        tour      = car["tour"]
+        c_lats    = car["lats"]
+        c_lons    = car["lons"]
+        g_idx     = car["global_indices"]
+        dist_mat  = car["dist_matrix"]
+
+        ordered_lats = [float(c_lats[i]) for i in tour]
+        ordered_lons = [float(c_lons[i]) for i in tour]
+        ordered_g    = [g_idx[i] for i in tour]
+
+        # open route polyline (no return to depot)
+        osrm = _osrm_route(ordered_lats, ordered_lons)
+        if osrm:
+            polyline, leg_dist, leg_time = osrm
+            src = "osrm"
+        else:
+            n = len(tour)
+            polyline = [[ordered_lats[i], ordered_lons[i]] for i in range(n)]
+            leg_dist, leg_time = [], []
+            for i in range(n - 1):
+                d = float(dist_mat[tour[i], tour[i + 1]]) * ROAD_FACTOR
+                leg_dist.append(round(d, 2))
+                leg_time.append(round(d / req.avg_speed_kmh * 60, 1))
+            # last leg has no "next" stop → 0
+            leg_dist.append(0.0)
+            leg_time.append(0.0)
+            src = "haversine_fallback"
+
+        stops = []
+        for stop_idx, df_pos in enumerate(ordered_g):
+            r = s.hs.iloc[df_pos]
+            stops.append(dict(
+                order=stop_idx + 1,
+                lat=float(r.centroid_lat),
+                lon=float(r.centroid_lon),
+                station=str(r.dominant_police_station),
+                dominant_violation=str(r.dominant_violation_type),
+                hotspots_in_radius=int(len(nbrs[df_pos])),
+                dist_to_next_km=leg_dist[stop_idx] if stop_idx < len(leg_dist) else 0.0,
+                time_to_next_min=leg_time[stop_idx] if stop_idx < len(leg_time) else 0.0,
+            ))
+
+        total_dist = round(sum(leg_dist[:-1]), 2)   # exclude trailing 0
+        total_time = round(sum(leg_time[:-1]), 1)
+
+        cars_out.append(dict(
+            car_id=car["car_id"],
+            color=car["color"],
+            stops=stops,
+            polyline=polyline,
+            total_distance_km=total_dist,
+            total_time_min=total_time,
+            route_source=src,
+        ))
+
+    return dict(
+        num_cars=len(cars_out),
+        stops_per_car=req.stops_per_car,
+        total_hotspots=len(cars_out) * req.stops_per_car,
+        shift_window=core.shift_window(cur_h),
+        shift_hours=req.shift_hours,
+        cars=cars_out,
+    )
