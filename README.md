@@ -340,7 +340,6 @@ For more details, see the [Analysis README](./analysis/README.md).
 ---
 
 <div align="center">
-  <br />
   <p>
     <b>Built with ❤️ for Bengaluru</b>
   </p>
