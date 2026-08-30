@@ -53,7 +53,7 @@ function ImperativeOptimizerMap({
 
     if (multiRouteData?.cars?.length) {
       const allBounds: [number, number][] = [];
-      
+
       // Filter cars to show based on selectedCarIds (if provided)
       const visibleCars = selectedCarIds
         ? multiRouteData.cars.filter(car => selectedCarIds.includes(car.car_id))
@@ -89,7 +89,7 @@ function ImperativeOptimizerMap({
             iconAnchor: [14, 14],
           });
           L.marker([stop.lat, stop.lon], { icon, interactive: false })
-            .bindTooltip(`PU-${String(car.car_id).padStart(2,"0")} · Stop ${stop.order}<br/>${stop.station}`, { sticky: true })
+            .bindTooltip(`PU-${String(car.car_id).padStart(2, "0")} · Stop ${stop.order}<br/>${stop.station}`, { sticky: true })
             .addTo(group);
         });
       });
@@ -177,7 +177,7 @@ export default function PatrolMapCanvas({
       className="absolute inset-0 w-full h-full bg-[#0d1117]"
       whenReady={onReady}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} />
+      <TileLayer url={"https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" + ((import.meta as any).env?.VITE_CARTO_API_KEY ? "?key=" + (import.meta as any).env.VITE_CARTO_API_KEY : "")} maxZoom={19} />
       <ImperativeOptimizerMap points={points} opt={opt} routeData={routeData} multiRouteData={multiRouteData} selectedCarIds={selectedCarIds} />
     </MapContainer>
   );

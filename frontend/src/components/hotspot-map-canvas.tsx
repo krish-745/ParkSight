@@ -248,7 +248,7 @@ export default function HotspotMapCanvas({ onReady, ...layerProps }: HotspotMapC
       className="absolute inset-0 w-full h-full bg-[#0d1117]"
       whenReady={onReady}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} />
+      <TileLayer url={"https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" + ((import.meta as any).env?.VITE_CARTO_API_KEY ? "?key=" + (import.meta as any).env.VITE_CARTO_API_KEY : "")} maxZoom={19} />
       <ImperativeMapLayers {...layerProps} />
     </MapContainer>
   );

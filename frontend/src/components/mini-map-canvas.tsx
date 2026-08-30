@@ -40,7 +40,7 @@ export default function MiniMapCanvas({ points, className }: { points: GeoPoint[
       className={className}
       style={{ background: "#0d1117" }}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" maxZoom={19} />
+      <TileLayer url={"https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" + ((import.meta as any).env?.VITE_CARTO_API_KEY ? "?key=" + (import.meta as any).env.VITE_CARTO_API_KEY : "")} maxZoom={19} />
       <Dots points={points} />
     </MapContainer>
   );
