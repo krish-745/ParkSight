@@ -336,8 +336,15 @@ For more details, see the [Analysis README](./analysis/README.md).
 - [Recharts](https://recharts.org/) — coverage curve + breakdown charts
 - [lucide-react](https://lucide.dev/) — icons
 
+
 ---
 
-## License
-
-MIT
+<div align="center">
+  <br />
+  <p>
+    <b>Built with ❤️ for Bengaluru</b>
+  </p>
+  <p>
+    <i>For better streets, smarter patrols, and a free-flowing city.</i>
+  </p>
+</div>
